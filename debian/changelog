@@ -1,3 +1,9 @@
+uwsgi (1.9.13~precise1) precise; urgency=low
+
+  * Backport 1.9.13 to Ubuntu Precise
+
+ -- Max Arnold <arnold.maxim@gmail.com>  Sun, 23 Jun 2013 19:12:00 +0700
+
 uwsgi (1.9.11-1) unstable; urgency=low
 
   * New upstream release.
