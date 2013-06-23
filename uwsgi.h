@@ -218,11 +218,6 @@ extern "C" {
 #include <sys/prctl.h>
 #include <linux/limits.h>
 #include <sys/mount.h>
-#ifdef UWSGI_PTRACE
-#include <sys/ptrace.h>
-#include <sys/user.h>
-#include <sys/reg.h>
-#endif
 extern int pivot_root(const char *new_root, const char *put_old);
 #endif
 
@@ -278,7 +273,9 @@ extern int pivot_root(const char *new_root, const char *put_old);
 #endif
 
 #if defined(__HAIKU__) || defined(__CYGWIN__)
+#ifndef WAIT_ANY
 #define WAIT_ANY (-1)
+#endif
 #define PRIO_MAX  20
 #endif
 
@@ -1048,6 +1045,7 @@ struct uwsgi_spooler {
 	uint64_t tasks;
 	struct uwsgi_lock_item *lock;
 	time_t harakiri;
+	time_t user_harakiri;
 
 	int mode;
 
@@ -1220,6 +1218,10 @@ struct uwsgi_transformation {
 	uint8_t flushed;
 	void *data;
 	uint64_t round;
+	int fd;
+	struct uwsgi_buffer *ub;
+	uint64_t len;
+	uint64_t custom64;
 	struct uwsgi_transformation *next;
 };
 
@@ -1398,6 +1400,7 @@ struct wsgi_request {
 	int headers_hvec;
 
 	uint64_t proto_parser_pos;
+	uint64_t proto_parser_move;
 	int64_t proto_parser_status;
 	void *proto_parser_buf;
 	uint64_t proto_parser_buf_size;
@@ -1425,6 +1428,12 @@ struct wsgi_request {
 	time_t websocket_last_ping;
 	time_t websocket_last_pong;
 	int websocket_closed;
+
+	struct uwsgi_buffer *chunked_input_buf;
+	uint8_t chunked_input_parser_status;
+	ssize_t chunked_input_chunk_len;
+	size_t chunked_input_need;
+	uint8_t chunked_input_complete;
 
 	uint64_t stream_id;
 
@@ -1870,6 +1879,8 @@ struct uwsgi_server {
 	struct uwsgi_regexp_list *log_req_route;
 #endif
 
+	int use_abort;
+
 	int alarm_freq;
 	uint64_t alarm_msg_size;
 	struct uwsgi_string_list *alarm_list;
@@ -1945,6 +1956,7 @@ struct uwsgi_server {
 	struct uwsgi_offload_engine *offload_engine_sendfile;
 	struct uwsgi_offload_engine *offload_engine_transfer;
 	struct uwsgi_offload_engine *offload_engine_memory;
+	struct uwsgi_offload_engine *offload_engine_pipe;
 	int offload_threads;
 	int offload_threads_events;
 	struct uwsgi_thread **offload_thread;
@@ -1995,6 +2007,7 @@ struct uwsgi_server {
 	struct uwsgi_string_list *touch_logrotate;
 	struct uwsgi_string_list *touch_logreopen;
 	struct uwsgi_string_list *touch_exec;
+	struct uwsgi_string_list *touch_signal;
 
 	int propagate_touch;
 
@@ -2237,6 +2250,7 @@ struct uwsgi_server {
 	size_t lock_size;
 	size_t rwlock_size;
 
+	struct uwsgi_string_list *add_cache_item;
 	struct uwsgi_string_list *load_file_in_cache;
 #ifdef UWSGI_ZLIB
 	struct uwsgi_string_list *load_file_in_cache_gzip;
@@ -2338,6 +2352,9 @@ struct uwsgi_server {
 	int websockets_ping_freq;
 	int websockets_pong_tolerance;
 	uint64_t websockets_max_size;
+
+	int chunked_input_timeout;
+	uint64_t chunked_input_limit;
 
 	int (*wait_write_hook) (int, int);
 	int (*wait_read_hook) (int, int);
@@ -2568,6 +2585,7 @@ struct uwsgi_mule {
 	uint8_t signum;
 
 	time_t harakiri;
+	time_t user_harakiri;
 
 	char name[0xff];
 };
@@ -3227,6 +3245,7 @@ struct uwsgi_gateway_socket *uwsgi_new_gateway_socket(char *, char *);
 struct uwsgi_gateway_socket *uwsgi_new_gateway_socket_from_fd(int, char *);
 
 void escape_shell_arg(char *, size_t, char *);
+void escape_json(char *, size_t, char *);
 
 void *uwsgi_malloc_shared(size_t);
 void *uwsgi_calloc_shared(size_t);
@@ -3355,7 +3374,8 @@ void uwsgi_opt_set_cap(char *, char *, void *);
 void uwsgi_opt_set_unshare(char *, char *, void *);
 #endif
 
-char *uwsgi_tmpname(char *, char *);
+int uwsgi_tmpfd();
+FILE *uwsgi_tmpfile();
 
 #ifdef UWSGI_ROUTING
 struct uwsgi_router *uwsgi_register_router(char *, int (*)(struct uwsgi_route *, char *));
@@ -3490,8 +3510,12 @@ char *uwsgi_substitute(char *, char *, char *);
 
 void uwsgi_opt_add_custom_option(char *, char *, void *);
 void uwsgi_opt_cflags(char *, char *, void *);
+void uwsgi_opt_dot_h(char *, char *, void *);
 void uwsgi_opt_connect_and_read(char *, char *, void *);
 void uwsgi_opt_extract(char *, char *, void *);
+
+char *uwsgi_get_dot_h();
+char *uwsgi_get_cflags();
 
 struct uwsgi_string_list *uwsgi_string_list_has_item(struct uwsgi_string_list *, char *, size_t);
 
@@ -3770,6 +3794,10 @@ struct uwsgi_thread *uwsgi_offload_thread_start(void);
 int uwsgi_offload_request_sendfile_do(struct wsgi_request *, int, size_t);
 int uwsgi_offload_request_net_do(struct wsgi_request *, char *, struct uwsgi_buffer *);
 int uwsgi_offload_request_memory_do(struct wsgi_request *, char *, size_t);
+int uwsgi_offload_request_pipe_do(struct wsgi_request *, int, size_t);
+
+int uwsgi_simple_sendfile(struct wsgi_request *, int, size_t, size_t);
+int uwsgi_simple_write(struct wsgi_request *, char *, size_t);
 
 
 void uwsgi_subscription_set_algo(char *);
@@ -3851,6 +3879,8 @@ void uwsgi_websockets_init(void);
 int uwsgi_websocket_send(struct wsgi_request *, char *, size_t);
 struct uwsgi_buffer *uwsgi_websocket_recv(struct wsgi_request *);
 struct uwsgi_buffer *uwsgi_websocket_recv_nb(struct wsgi_request *);
+
+char *uwsgi_chunked_read(struct wsgi_request *, size_t *, int, int);
 
 uint16_t uwsgi_be16(char *);
 uint32_t uwsgi_be32(char *);
@@ -3995,9 +4025,11 @@ int uwsgi_emperor_vassal_start(struct uwsgi_instance *);
 #ifdef UWSGI_ZLIB
 #include <zlib.h>
 int uwsgi_deflate_init(z_stream *, char *, size_t);
+int uwsgi_inflate_init(z_stream *, char *, size_t);
 char *uwsgi_deflate(z_stream *, char *, size_t, size_t *);
 void uwsgi_crc32(uint32_t *, char *, size_t);
 struct uwsgi_buffer *uwsgi_gzip(char *, size_t);
+struct uwsgi_buffer *uwsgi_zlib_decompress(char *, size_t);
 int uwsgi_gzip_fix(z_stream *, uint32_t, struct uwsgi_buffer *, size_t);
 char *uwsgi_gzip_chunk(z_stream *, uint32_t *, char *, size_t, size_t *);
 int uwsgi_gzip_prepare(z_stream *, char *, size_t, uint32_t *);
@@ -4039,6 +4071,10 @@ void uwsgi_spooler_run(void);
 void uwsgi_takeover(void);
 
 char *uwsgi_binary_path(void);
+
+int uwsgi_is_again();
+void uwsgi_disconnect(struct wsgi_request *);
+int uwsgi_ready_fd(struct wsgi_request *);
 
 void uwsgi_check_emperor(void);
 #ifdef UWSGI_AS_SHARED_LIBRARY

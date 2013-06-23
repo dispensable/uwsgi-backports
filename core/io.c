@@ -1078,3 +1078,22 @@ void uwsgi_add_safe_fd(int fd) {
 	uwsgi.safe_fds[uwsgi.safe_fds_cnt] = fd;	
 	uwsgi.safe_fds_cnt++;
 }
+
+int uwsgi_is_again() {
+	if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS) {
+		return 1;
+	}
+	return 0;
+}
+
+void uwsgi_disconnect(struct wsgi_request *wsgi_req) {
+	if (wsgi_req->socket) {
+                wsgi_req->socket->proto_close(wsgi_req);
+        }
+        wsgi_req->fd_closed = 1;
+}
+
+int uwsgi_ready_fd(struct wsgi_request *wsgi_req) {
+	if (wsgi_req->async_ready_fd) return wsgi_req->async_last_ready_fd;
+	return -1;
+}

@@ -1,11 +1,16 @@
 import java.io.*;
+import java.util.*;
 
 public class uwsgi {
+
+	static HashMap<String,Object> opt;	
 
 	public static class RequestBody extends InputStream {
 		public native int read();
 		public native int read(byte[] b);
+		public native int readLine(byte[] b);
 		public native int available();
+		public native void seek(int pos);
 	}
 
 	public interface SignalHandler {

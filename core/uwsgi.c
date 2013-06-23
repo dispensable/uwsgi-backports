@@ -236,6 +236,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"cache-sync", required_argument, 0, "copy the whole content of another uWSGI cache server on server startup", uwsgi_opt_set_str, &uwsgi.cache_sync, 0},
 	{"cache-use-last-modified", no_argument, 0, "update last_modified_at timestamp on every cache item modification (default is disabled)", uwsgi_opt_true, &uwsgi.cache_use_last_modified, 0},
 
+	{"add-cache-item", required_argument, 0, "add an item in the cache", uwsgi_opt_add_string_list, &uwsgi.add_cache_item, 0},
 	{"load-file-in-cache", required_argument, 0, "load a static file in the cache", uwsgi_opt_add_string_list, &uwsgi.load_file_in_cache, 0},
 #ifdef UWSGI_ZLIB
 	{"load-file-in-cache-gzip", required_argument, 0, "load a static file in the cache with gzip compression", uwsgi_opt_add_string_list, &uwsgi.load_file_in_cache_gzip, 0},
@@ -349,6 +350,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"touch-logrotate", required_argument, 0, "trigger logrotation if the specified file is modified/touched", uwsgi_opt_add_string_list, &uwsgi.touch_logrotate, UWSGI_OPT_MASTER | UWSGI_OPT_LOG_MASTER},
 	{"touch-logreopen", required_argument, 0, "trigger log reopen if the specified file is modified/touched", uwsgi_opt_add_string_list, &uwsgi.touch_logreopen, UWSGI_OPT_MASTER | UWSGI_OPT_LOG_MASTER},
 	{"touch-exec", required_argument, 0, "run command when the specified file is modified/touched (syntax: file command)", uwsgi_opt_add_string_list, &uwsgi.touch_exec, UWSGI_OPT_MASTER},
+	{"touch-signal", required_argument, 0, "signal when the specified file is modified/touched (syntax: file signal)", uwsgi_opt_add_string_list, &uwsgi.touch_signal, UWSGI_OPT_MASTER},
 	{"propagate-touch", no_argument, 0, "over-engineering option for system with flaky signal mamagement", uwsgi_opt_true, &uwsgi.propagate_touch, 0},
 	{"limit-post", required_argument, 0, "limit request body", uwsgi_opt_set_64bit, &uwsgi.limit_post, 0},
 	{"no-orphans", no_argument, 0, "automatically kill workers if master dies (can be dangerous for availability)", uwsgi_opt_true, &uwsgi.no_orphans, 0},
@@ -459,6 +461,9 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"log-route", required_argument, 0, "log to the specified named logger if regexp applied on logline matches", uwsgi_opt_add_regexp_custom_list, &uwsgi.log_route, UWSGI_OPT_MASTER | UWSGI_OPT_LOG_MASTER},
 	{"log-req-route", required_argument, 0, "log requests to the specified named logger if regexp applied on logline matches", uwsgi_opt_add_regexp_custom_list, &uwsgi.log_req_route, UWSGI_OPT_REQ_LOG_MASTER},
 #endif
+
+	{"use-abort", no_argument, 0, "call abort() on segfault/fpe, could be useful for generating a core dump", uwsgi_opt_true, &uwsgi.use_abort, 0},
+
 	{"alarm", required_argument, 0, "create a new alarm, syntax: <alarm> <plugin:args>", uwsgi_opt_add_string_list, &uwsgi.alarm_list, UWSGI_OPT_MASTER},
 	{"alarm-freq", required_argument, 0, "tune the anti-loop alam system (default 3 seconds)", uwsgi_opt_set_int, &uwsgi.alarm_freq, 0},
 	{"alarm-fd", required_argument, 0, "raise the specified alarm when an fd is read for read (by default it reads 1 byte, set 8 for eventfd)", uwsgi_opt_add_string_list, &uwsgi.alarm_fd_list, UWSGI_OPT_MASTER},
@@ -579,6 +584,9 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"websockets-max-size", required_argument, 0, "set the max allowed size of websocket messages (in Kbytes, default 1024)", uwsgi_opt_set_64bit, &uwsgi.websockets_max_size, 0},
 	{"websocket-max-size", required_argument, 0, "set the max allowed size of websocket messages (in Kbytes, default 1024)", uwsgi_opt_set_64bit, &uwsgi.websockets_max_size, 0},
 
+	{"chunked-input-limit", required_argument, 0, "set the max size of a chunked input part (default 1MB, in bytes)", uwsgi_opt_set_64bit, &uwsgi.chunked_input_limit, 0},
+	{"chunked-input-timeout", required_argument, 0, "set default timeout for chunked input", uwsgi_opt_set_int, &uwsgi.chunked_input_timeout, 0},
+
 	{"clock", required_argument, 0, "set a clock source", uwsgi_opt_set_str, &uwsgi.requested_clock, 0},
 
 	{"clock-list", no_argument, 0, "list enabled clocks", uwsgi_opt_true, &uwsgi.clock_list, 0},
@@ -693,6 +701,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"show-config", no_argument, 0, "show the current config reformatted as ini", uwsgi_opt_true, &uwsgi.show_config, 0},
 	{"print", required_argument, 0, "simple print", uwsgi_opt_print, NULL, 0},
 	{"cflags", no_argument, 0, "report uWSGI CFLAGS (useful for building external plugins)", uwsgi_opt_cflags, NULL, UWSGI_OPT_IMMEDIATE},
+	{"dot-h", no_argument, 0, "dump the uwsgi.h used for building the core  (useful for building external plugins)", uwsgi_opt_dot_h, NULL, UWSGI_OPT_IMMEDIATE},
 	{"version", no_argument, 0, "print uWSGI version", uwsgi_opt_print, UWSGI_VERSION, 0},
 	{0, 0, 0, 0, 0, 0, 0}
 };
@@ -1527,6 +1536,8 @@ void uwsgi_segfault(int signum) {
 	uwsgi_log("!!! uWSGI process %d got Segmentation Fault !!!\n", (int) getpid());
 	uwsgi_backtrace(uwsgi.backtrace_depth);
 
+	if (uwsgi.use_abort) abort();
+
 	// restore default handler to generate core
 	signal(signum, SIG_DFL);
 	kill(getpid(), signum);
@@ -1539,6 +1550,8 @@ void uwsgi_fpe(int signum) {
 
 	uwsgi_log("!!! uWSGI process %d got Floating Point Exception !!!\n", (int) getpid());
 	uwsgi_backtrace(uwsgi.backtrace_depth);
+
+	if (uwsgi.use_abort) abort();
 
 	// restore default handler to generate core
 	signal(signum, SIG_DFL);
@@ -3386,7 +3399,9 @@ void uwsgi_opt_set_16bit(char *opt, char *value, void *key) {
         uint16_t *ptr = (uint16_t *) key;
 
         if (value) {
-                *ptr = (strtoul(value, NULL, 10));
+		unsigned long n = strtoul(value, NULL, 10);
+		if (n > 65535) n = 65535;
+                *ptr = n;
         }
         else {
                 *ptr = 1;
@@ -4057,19 +4072,60 @@ void uwsgi_opt_flock_wait(char *opt, char *filename, void *none) {
 // report CFLAGS used for compiling the server
 // use that values to build external plugins
 void uwsgi_opt_cflags(char *opt, char *filename, void *foobar) {
-	size_t len = sizeof(UWSGI_CFLAGS);
-	char *src = UWSGI_CFLAGS;
-	char *ptr = uwsgi_malloc(len / 2);
-	char *base = ptr;
-	size_t i;
-	unsigned int u;
-	for (i = 0; i < len; i += 2) {
-		sscanf(src + i, "%2x", &u);
-		*ptr++ = (char) u;
-	}
-	fprintf(stdout, "%.*s\n", (int) len / 2, base);
+	fprintf(stdout, "%s\n", uwsgi_get_cflags());
 	exit(0);
 }
+
+char *uwsgi_get_cflags() {
+	size_t len = sizeof(UWSGI_CFLAGS);
+        char *src = UWSGI_CFLAGS;
+        char *ptr = uwsgi_malloc((len / 2) + 1);
+        char *base = ptr;
+        size_t i;
+        unsigned int u;
+        for (i = 0; i < len; i += 2) {
+                sscanf(src + i, "%2x", &u);
+                *ptr++ = (char) u;
+        }
+	*ptr ++= 0;
+	return base;
+}
+
+// report uwsgi.h used for compiling the server
+// use that values to build external plugins
+extern char *uwsgi_dot_h;
+char *uwsgi_get_dot_h() {
+	char *src = uwsgi_dot_h;
+	size_t len = strlen(src);
+        char *ptr = uwsgi_malloc(len / 2);
+        char *base = ptr;
+        size_t i;
+        unsigned int u;
+        for (i = 0; i < len; i += 2) {
+                sscanf(src + i, "%2x", &u);
+                *ptr++ = (char) u;
+        }
+#ifdef UWSGI_ZLIB
+	struct uwsgi_buffer *ub = uwsgi_zlib_decompress(base, ptr-base);
+	if (!ub) {
+		free(base);
+		return "";
+	}
+	// add final null byte
+	uwsgi_buffer_append(ub, "\0", 1);
+	free(base);
+	// base is the final blob
+	base = ub->buf;
+	ub->buf = NULL;
+	uwsgi_buffer_destroy(ub);
+#endif
+	return base;
+}
+void uwsgi_opt_dot_h(char *opt, char *filename, void *foobar) {
+        fprintf(stdout, "%s\n", uwsgi_get_dot_h());
+        exit(0);
+}
+
 
 void uwsgi_opt_connect_and_read(char *opt, char *address, void *foobar) {
 
@@ -4107,9 +4163,9 @@ void uwsgi_opt_extract(char *opt, char *address, void *foobar) {
 }
 
 void uwsgi_print_sym(char *opt, char *symbol, void *foobar) {
-	char *sym = dlsym(RTLD_DEFAULT, symbol);
+	char **sym = dlsym(RTLD_DEFAULT, symbol);
 	if (sym) {
-		uwsgi_log("%s", sym);
+		uwsgi_log("%s", *sym);
 		exit(0);
 	}
 	
