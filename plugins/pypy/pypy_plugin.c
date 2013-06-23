@@ -41,47 +41,6 @@ void (*uwsgi_pypy_post_fork_hook)(void);
 extern struct uwsgi_server uwsgi;
 struct uwsgi_plugin pypy_plugin;
 
-int uwsgi_pypy_helper_masterpid() {
-	if (uwsgi.master_process) {
-		return uwsgi.workers[0].pid;
-	}
-	return 0;
-}
-
-int uwsgi_pypy_helper_worker_id() {
-	return uwsgi.mywid;
-}
-
-int uwsgi_pypy_helper_mule_id() {
-	return uwsgi.muleid;
-}
-
-void uwsgi_pypy_helper_signal(int signum) {
-	uwsgi_signal_send(uwsgi.signal_socket, signum);
-}
-
-struct uwsgi_opt **uwsgi_pypy_helper_opts(int *n) {
-	*n = uwsgi.exported_opts_cnt;
-	return uwsgi.exported_opts;
-}
-
-char *uwsgi_pypy_helper_version() {
-	return UWSGI_VERSION;
-}
-
-int uwsgi_pypy_helper_register_signal(int signum, char *kind, void *handler) {
-	return uwsgi_register_signal(signum, kind, handler, pypy_plugin.modifier1);
-}
-
-int uwsgi_pypy_helper_register_rpc(char *name, int argc, void *func) {
-	return uwsgi_register_rpc(name, &pypy_plugin, argc, func);
-}
-
-struct iovec *uwsgi_pypy_helper_environ(struct wsgi_request *wsgi_req, uint16_t *len) {
-	*len = wsgi_req->var_cnt;
-	return wsgi_req->hvec;
-}
-
 static int uwsgi_pypy_init() {
 
 	size_t rlen = 0;
@@ -342,6 +301,20 @@ static void uwsgi_pypy_onload() {
 #endif
 }
 
+static int uwsgi_pypy_mule(char *opt) {
+
+        if (uwsgi_endswith(opt, ".py")) {
+                size_t rlen = 0;
+                char *buffer = uwsgi_open_and_read(opt, &rlen, 1, NULL);
+                pypy_execute_source(buffer);
+		free(buffer);
+                return 1;
+        }
+        return 0;
+
+}
+
+
 struct uwsgi_plugin pypy_plugin = {
 	.name = "pypy",
 	.modifier1 = 0,
@@ -357,4 +330,5 @@ struct uwsgi_plugin pypy_plugin = {
 	.enable_threads = uwsgi_pypy_enable_threads,
 	.rpc = uwsgi_pypy_rpc,
 	.post_fork = uwsgi_pypy_post_fork,
+	.mule = uwsgi_pypy_mule,
 };

@@ -71,11 +71,30 @@ void set_user_harakiri(int sec) {
 		uwsgi_log("!!! unable to set user harakiri without the master process !!!\n");
 		return;
 	}
+	// a 0 seconds value, reset the timer
 	if (sec == 0) {
-		uwsgi.workers[uwsgi.mywid].user_harakiri = 0;
+		if (uwsgi.muleid > 0) {
+			uwsgi.mules[uwsgi.muleid-1].user_harakiri = 0;
+		}
+		else if (uwsgi.i_am_a_spooler) {
+			struct uwsgi_spooler *uspool = uwsgi.i_am_a_spooler;
+			uspool->user_harakiri = 0;
+		}
+		else {
+			uwsgi.workers[uwsgi.mywid].user_harakiri = 0;
+		}
 	}
 	else {
-		uwsgi.workers[uwsgi.mywid].user_harakiri = uwsgi_now() + sec;
+		if (uwsgi.muleid > 0) {
+                        uwsgi.mules[uwsgi.muleid-1].user_harakiri = uwsgi_now() + sec;
+                }
+                else if (uwsgi.i_am_a_spooler) {
+                        struct uwsgi_spooler *uspool = uwsgi.i_am_a_spooler;
+                        uspool->user_harakiri = uwsgi_now() + sec;
+                }
+                else {
+			uwsgi.workers[uwsgi.mywid].user_harakiri = uwsgi_now() + sec;
+		}
 	}
 }
 
@@ -708,6 +727,11 @@ void uwsgi_close_request(struct wsgi_request *wsgi_req) {
                 free(ptr);
         }
 
+	// free chunked input
+	if (wsgi_req->chunked_input_buf) {
+                uwsgi_buffer_destroy(wsgi_req->chunked_input_buf);
+        }
+
 	// free websocket engine
 	if (wsgi_req->websocket_buf) {
 		uwsgi_buffer_destroy(wsgi_req->websocket_buf);
@@ -1147,7 +1171,6 @@ int uwsgi_get_app_id(struct wsgi_request *wsgi_req, char *key, uint16_t key_len,
 	int i;
 	struct stat st;
 	int found;
-	int free_appname = 0;
 
 	char *app_name = key;
 	uint16_t app_name_len = key_len;
@@ -1162,13 +1185,20 @@ int uwsgi_get_app_id(struct wsgi_request *wsgi_req, char *key, uint16_t key_len,
 			}
 
 			if (uwsgi.vhost) {
-                        	app_name = uwsgi_concat3n(wsgi_req->host, wsgi_req->host_len, "|",1, wsgi_req->script_name, wsgi_req->script_name_len);
+				char *vhost_name = uwsgi_concat3n(wsgi_req->host, wsgi_req->host_len, "|",1, wsgi_req->script_name, wsgi_req->script_name_len);
                         	app_name_len = wsgi_req->host_len + 1 + wsgi_req->script_name_len;
+				app_name = uwsgi_req_append(wsgi_req, "UWSGI_APPID", 11, vhost_name, app_name_len);
+				free(vhost_name);
+				if (!app_name) {
+					uwsgi_log("unable to add UWSGI_APPID to the uwsgi buffer, consider increasing it\n");
+					return -1;
+				}
 #ifdef UWSGI_DEBUG
-                        	uwsgi_debug("VirtualHost KEY=%.*s\n", wsgi_req->appid_len, wsgi_req->appid);
+                        	uwsgi_debug("VirtualHost KEY=%.*s\n", app_name_len, app_name);
 #endif
-                        	free_appname = 1;
 			}
+			wsgi_req->appid = app_name;
+			wsgi_req->appid_len = app_name_len;
                 }
         }
 
@@ -1203,18 +1233,11 @@ int uwsgi_get_app_id(struct wsgi_request *wsgi_req, char *key, uint16_t key_len,
 					}
 				}
 			}
-			if (modifier1 == -1) {
-				if (free_appname) free(app_name);
-				return i;
-			}
-			if (modifier1 == uwsgi_apps[i].modifier1) {
-				if (free_appname) free(app_name);
-				return i;
-			}
+			if (modifier1 == -1) return i;
+			if (modifier1 == uwsgi_apps[i].modifier1) return i;
 		}
 	}
 
-	if (free_appname) free(app_name);
 	return -1;
 }
 
@@ -1952,7 +1975,7 @@ int uwsgi_list_has_str(char *list, char *str) {
 	return 0;
 }
 
-char hex2num(char *str) {
+static char hex2num(char *str) {
 
 	char val = 0;
 
@@ -3065,6 +3088,36 @@ void escape_shell_arg(char *src, size_t len, char *dst) {
 	*ptr++ = 0;
 }
 
+void escape_json(char *src, size_t len, char *dst) {
+
+	size_t i;
+	char *ptr = dst;
+
+	for (i = 0; i < len; i++) {
+		if (src[i] == '\t') {
+			*ptr++ = '\\';
+			*ptr++ = 't';
+		}
+		else if (src[i] == '\n') {
+			*ptr++ = '\\';
+			*ptr++ = 'n';
+		}
+		else if (src[i] == '\r') {
+			*ptr++ = '\\';
+			*ptr++ = 'r';
+		}
+		else if (src[i] == '"') {
+			*ptr++ = '\\';
+			*ptr++ = '"';
+		}
+		else {
+			*ptr++ = src[i];
+		}
+	}
+
+	*ptr++ = 0;
+}
+
 void http_url_decode(char *buf, uint16_t * len, char *dst) {
 
 	uint16_t i;
@@ -3221,14 +3274,22 @@ char *uwsgi_chomp(char *str) {
 	return str;
 }
 
-char *uwsgi_tmpname(char *base, char *id) {
-	char *template = uwsgi_concat3(base, "/", id);
-	if (mkstemp(template) < 0) {
-		free(template);
-		return NULL;
+int uwsgi_tmpfd() {
+	char *tmpdir = getenv("TMPDIR");
+	if (!tmpdir) {
+		tmpdir = "/tmp";
 	}
+	char *template = uwsgi_concat2(tmpdir, "/uwsgiXXXXXX");
+	int fd = mkstemp(template);
+	unlink(template);
+	free(template);
+	return fd;
+}
 
-	return template;
+FILE *uwsgi_tmpfile() {
+	int fd = uwsgi_tmpfd();
+	if (fd < 0) return NULL;
+	return fdopen(fd, "w+");
 }
 
 int uwsgi_file_to_string_list(char *filename, struct uwsgi_string_list **list) {

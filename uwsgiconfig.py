@@ -1,6 +1,6 @@
 # uWSGI build system
 
-uwsgi_version = '1.9.11'
+uwsgi_version = '1.9.13'
 
 import os
 import re
@@ -25,13 +25,17 @@ try:
     import ConfigParser
 except:
     import configparser as ConfigParser
-    from imp import reload
 
 GCC = os.environ.get('CC', sysconfig.get_config_var('CC'))
 if not GCC:
     GCC = 'gcc'
 
-CPP = os.environ.get('CPP', 'cpp')
+def get_preprocessor():
+    if 'clang' in GCC:
+        return 'clang -xc core/clang_fake.c'
+    return 'cpp'
+
+CPP = os.environ.get('CPP', get_preprocessor())
 
 try:
     CPUCOUNT = int(os.environ.get('CPUCOUNT', -1))
@@ -245,11 +249,11 @@ def build_uwsgi(uc, print_only=False):
     print("detected CPU cores: %d" % CPUCOUNT)
     print("configured CFLAGS: %s" % ' '.join(cflags))
 
-    try:
-        uwsgi_cflags = ' '.join(cflags).encode('hex')
-    except:
+    if sys.version_info[0] >= 3:
         import binascii
         uwsgi_cflags = binascii.b2a_hex(' '.join(cflags).encode('ascii')).decode('ascii')
+    else:
+        uwsgi_cflags = ' '.join(cflags).encode('hex')
 
     last_cflags_ts = 0
     
@@ -266,6 +270,27 @@ def build_uwsgi(uc, print_only=False):
     ulc = open('uwsgibuild.lastcflags','w')
     ulc.write(uwsgi_cflags)
     ulc.close()
+
+
+    # embed uwsgi.h in the server binary. It increases the binary size, but will be very useful
+    # for various tricks (like cffi integration)
+    # if possibile, the blob is compressed
+    if sys.version_info[0] >= 3:
+        uwsgi_dot_h_content = open('uwsgi.h', 'rb').read()
+    else:
+        uwsgi_dot_h_content = open('uwsgi.h').read()
+    if report['zlib']:
+        import zlib
+        # maximum level of compression
+        uwsgi_dot_h_content = zlib.compress(uwsgi_dot_h_content, 9)
+    if sys.version_info[0] >= 3:
+        import binascii
+        uwsgi_dot_h = binascii.b2a_hex(uwsgi_dot_h_content).decode('ascii')
+    else:
+        uwsgi_dot_h = uwsgi_dot_h_content.encode('hex')
+    open('core/dot_h.c', 'w').write('char *uwsgi_dot_h = "%s";\n' % uwsgi_dot_h);
+    gcc_list.append('core/dot_h') 
+    
 
     cflags.append('-DUWSGI_CFLAGS=\\"%s\\"' % uwsgi_cflags)
     cflags.append('-DUWSGI_BUILD_DATE="\\"%s\\""' % time.strftime("%d %B %Y %H:%M:%S"))
@@ -314,6 +339,13 @@ def build_uwsgi(uc, print_only=False):
                 if uwsgi_os.startswith('CYGWIN'):
                     try:
                         p_cflags.remove('-fstack-protector')
+                    except:
+                        pass
+
+                if GCC in ('clang',):
+                    try:
+                        p_cflags.remove('-fno-fast-math')
+                        p_cflags.remove('-ggdb3')
                     except:
                         pass
 
@@ -456,6 +488,8 @@ def open_profile(filename):
 class uConf(object):
 
     def __init__(self, filename, mute=False):
+        global GCC
+
         self.config = ConfigParser.ConfigParser()
         if not mute:
             print("using profile: %s" % filename)
@@ -476,7 +510,7 @@ class uConf(object):
             'core/notify', 'core/mule', 'core/subscription', 'core/stats', 'core/sendfile', 'core/async', 'core/master_checks',
             'core/offload', 'core/io', 'core/static', 'core/websockets', 'core/spooler', 'core/snmp', 'core/exceptions', 'core/config',
             'core/setup_utils', 'core/clock', 'core/init', 'core/buffer', 'core/reader', 'core/writer', 'core/alarm', 'core/cron',
-            'core/plugins', 'core/lock', 'core/cache', 'core/daemons', 'core/errors', 'core/hash', 'core/master_events',
+            'core/plugins', 'core/lock', 'core/cache', 'core/daemons', 'core/errors', 'core/hash', 'core/master_events', 'core/chunked',
             'core/queue', 'core/event', 'core/signal', 'core/strings', 'core/progress', 'core/timebomb', 'core/ini',
             'core/rpc', 'core/gateway', 'core/loop', 'core/cookie', 'core/querystring', 'core/rb_timers', 'core/transformations', 'core/uwsgi']
         # add protocols
@@ -486,6 +520,10 @@ class uConf(object):
         self.gcc_list.append('proto/fastcgi')
         self.gcc_list.append('proto/scgi')
         self.include_path = []
+
+        if 'UWSGI_INCLUDES' in os.environ:
+            self.include_path += os.environ['UWSGI_INCLUDES'].split(',')
+
 
         self.cflags = ['-O2', '-I.', '-Wall', '-Werror', '-D_LARGEFILE_SOURCE', '-D_FILE_OFFSET_BITS=64'] + os.environ.get("CFLAGS", "").split() + self.get('cflags','').split()
 
@@ -504,11 +542,13 @@ class uConf(object):
         if uwsgi_os == 'GNU':
             self.cflags.append('-D__HURD__')
 
-        try:
-            gcc_version = str(spcall("%s -dumpversion" % GCC))
-        except:
-            print("*** you need a c compiler to build uWSGI ***")
-            sys.exit(1)
+        gcc_version = spcall("%s -dumpversion" % GCC)
+        if not gcc_version and GCC.startswith('gcc'):
+            if uwsgi_os == 'Darwin':
+                GCC = 'llvm-' + GCC
+            else:
+                GCC = 'gcc'
+            gcc_version = spcall("%s -dumpversion" % GCC)
 
         try:
             add_it = False
@@ -655,6 +695,8 @@ class uConf(object):
 
         if uwsgi_os == 'Darwin':
             self.cflags.append('-mmacosx-version-min=10.5')
+            if GCC in ('clang',):
+                self.libs.remove('-rdynamic')
 
         # compile extras
         extras = self.get('extras', None)
@@ -1196,6 +1238,13 @@ def build_plugin(path, uc, cflags, ldflags, libs, name = None):
         p_cflags.remove('-pie')
     except:
         pass
+
+    if GCC in ('clang',):
+        try:
+            p_cflags.remove('-fno-fast-math')
+            p_cflags.remove('-ggdb3')
+        except:
+            pass
 
     if uwsgi_os.startswith('CYGWIN'):
         try:
