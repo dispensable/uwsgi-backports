@@ -115,7 +115,7 @@ $(foreach PLUGIN_PKG_NAME, $(UWSGI_PLUGIN_PKGS_NAMES), $(eval \
 
 DEB_INSTALL_DOCS_ALL += $(DEB_SRCDIR)/CONTRIBUTORS
 
-DEB_DH_SHLIBDEPS_ARGS_uwsgi-plugin-php = -l/usr/lib/php5 -- --ignore-missing-info
+# DEB_DH_SHLIBDEPS_ARGS_uwsgi-plugin-php = -l/usr/lib/php5 -- --ignore-missing-info
 
 # Rules
 # =====
