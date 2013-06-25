@@ -1,4 +1,4 @@
-uwsgi (1.9.13-1~precise1) precise; urgency=low
+uwsgi (1.9.13-2~precise1) precise; urgency=low
 
   * Backport 1.9.13 to Ubuntu Precise
 
