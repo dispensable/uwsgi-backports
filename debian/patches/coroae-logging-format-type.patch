@@ -1,0 +1,13 @@
+diff --git a/plugins/coroae/coroae.c b/plugins/coroae/coroae.c
+index 6832aaa..53bc279 100644
+--- a/plugins/coroae/coroae.c
++++ b/plugins/coroae/coroae.c
+@@ -394,7 +394,7 @@ static void coroae_loop() {
+ 	coroae_wait_condvar(condvar);
+ 
+ 	if (uwsgi.workers[uwsgi.mywid].manage_next_request == 0) {
+-                uwsgi_log("goodbye to the Coro::AnyEvent loop on worker %d (pid: %d)\n", uwsgi.mywid, uwsgi.mypid);
++                uwsgi_log("goodbye to the Coro::AnyEvent loop on worker %d (pid: %d)\n", uwsgi.mywid, (int) uwsgi.mypid);
+                 exit(UWSGI_RELOAD_CODE);
+         }
+ 
