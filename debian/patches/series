@@ -7,3 +7,4 @@ remove-php-libs.patch
 fix-php-ldflags.patch
 alarm_speech-flags.patch
 coroae-logging-format-type.patch
+emperor-pg-fix-cflags.patch

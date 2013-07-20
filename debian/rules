@@ -15,6 +15,8 @@ APXS2=/usr/bin/apxs2
 APR_CONFIG=/usr/bin/apr-config
 APU_CONFIG=/usr/bin/apu-config
 UWSGI_BUILDER = $(CURDIR)/uwsgiconfig.py
+APACHE2_API = $(shell perl -ne 'print $$1 if m/our\s+\$$API\s+=\s+"(.*)"/' < $(shell which dh_apache2))
+PHP_API = $(shell php-config --phpapi)
 
 DEB_HOST_ARCH := $(shell dpkg-architecture -qDEB_HOST_ARCH)
 
@@ -116,6 +118,12 @@ $(foreach PLUGIN_PKG_NAME, $(UWSGI_PLUGIN_PKGS_NAMES), $(eval \
 DEB_INSTALL_DOCS_ALL += $(DEB_SRCDIR)/CONTRIBUTORS
 
 # DEB_DH_SHLIBDEPS_ARGS_uwsgi-plugin-php = -l/usr/lib/php5 -- --ignore-missing-info
+
+DEB_DH_GENCONTROL_ARGS_uwsgi-plugin-php = -- -Vuwsgi:php:Depends="phpapi-$(PHP_API)"
+
+DEB_DH_GENCONTROL_ARGS_libapache2-mod-proxy-uwsgi = -- -Vuwsgi:apache2:Depends="apache2-api-$(APACHE2_API)"
+DEB_DH_GENCONTROL_ARGS_libapache2-mod-uwsgi = -- -Vuwsgi:apache2:Depends="apache2-api-$(APACHE2_API)"
+DEB_DH_GENCONTROL_ARGS_libapache2-mod-ruwsgi = -- -Vuwsgi:apache2:Depends="apache2-api-$(APACHE2_API)"
 
 # Rules
 # =====
@@ -235,6 +243,7 @@ uwsgi-core: debian/buildconf/uwsgi-plugin.ini uwsgi-core-local
 	
 	set -e; for PLUGIN_NAME in \
 			admin \
+			alarm_speech \
 			cache \
 			carbon \
 			cgi \
@@ -243,6 +252,7 @@ uwsgi-core: debian/buildconf/uwsgi-plugin.ini uwsgi-core-local
 			clock_monotonic \
 			clock_realtime \
 			corerouter \
+			coroae \
 			echo \
 			emperor_amqp \
 			emperor_zeromq \
@@ -253,6 +263,7 @@ uwsgi-core: debian/buildconf/uwsgi-plugin.ini uwsgi-core-local
 			logsocket \
 			nagios \
 			notfound \
+			pam \
 			ping \
 			rawrouter \
 			redislog \

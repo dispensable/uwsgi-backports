@@ -5,7 +5,7 @@ Maintainer: Janos Guljas <janos@debian.org>
 Build-Depends:
  cdbs,
  debhelper (>= 8),
- apache2-threaded-dev,
+ apache2-dev (>> 2.4~),
  erlang-dev,
  help2man,
  javahelper,
@@ -28,7 +28,7 @@ Build-Depends:
  libgnustep-base-dev,
  libcoro-perl,
  libgeoip-dev,
- libv8-dev,
+ libv8-dev [amd64 armel armhf i386],
  libxslt1-dev,
  pkg-config,
  python,
@@ -91,7 +91,7 @@ Package: uwsgi-core
 Architecture: any
 Priority: optional
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Suggests: nginx-full | cherokee | libapache2-mod-uwsgi | libapache2-mod-ruwsgi,
+Suggests: nginx-full | cherokee | libapache2-mod-proxy-uwsgi | libapache2-mod-uwsgi | libapache2-mod-ruwsgi,
  uwsgi-plugins-all, uwsgi-extra
 Replaces: wsgi-plugin-admin,
  uwsgi-plugin-cache,
@@ -152,6 +152,7 @@ Description: fast, self-healing application container server (core)
    * uWSGI test suite
    * plugins that do not require additional dependencies:
     - admin
+    - alarm_speech
     - cache
     - carbon
     - cgi
@@ -160,6 +161,7 @@ Description: fast, self-healing application container server (core)
     - clock_monothonic
     - clock_realtime
     - corerouter
+    - coroae
     - echo
     - emperor_amqp
     - emperor_zeromq
@@ -170,6 +172,7 @@ Description: fast, self-healing application container server (core)
     - logsocket
     - nagios
     - notfound
+    - pam
     - ping
     - rawrouter
     - redislog
@@ -227,7 +230,6 @@ Architecture: any
 Depends: ${misc:Depends},
  uwsgi-infrastructure-plugins (= ${binary:Version}),
  uwsgi-app-integration-plugins (= ${binary:Version}),
- uwsgi-plugin-coroae (= ${binary:Version}),
  uwsgi-plugin-fiber (= ${binary:Version}),
  uwsgi-plugin-greenlet-python (= ${binary:Version})
    [amd64 i386 mips powerpc s390],
@@ -250,14 +252,12 @@ Package: uwsgi-infrastructure-plugins
 Architecture: any
 Depends: ${misc:Depends},
  uwsgi-plugin-alarm-curl (= ${binary:Version}),
- uwsgi-plugin-alarm-speech (= ${binary:Version}),
  uwsgi-plugin-alarm-xmpp (= ${binary:Version}),
  uwsgi-plugin-curl-cron (= ${binary:Version}),
  uwsgi-plugin-emperor-pg (= ${binary:Version}),
  uwsgi-plugin-graylog2 (= ${binary:Version}),
  uwsgi-plugin-geoip (= ${binary:Version}),
  uwsgi-plugin-ldap (= ${binary:Version}),
- uwsgi-plugin-pam (= ${binary:Version}),
  uwsgi-plugin-router-access (= ${binary:Version}),
  uwsgi-plugin-sqlite3 (= ${binary:Version}),
  uwsgi-plugin-xslt (= ${binary:Version})
@@ -270,14 +270,12 @@ Description: infrastructure plugins for uWSGI
  .
  This dependency package provides infrastructure plugins for uWSGI:
    * alarm curl
-   * alarm speech
    * alarm XMPP
    * curl cron
    * PostgreSQL emperor
    * graylog2
    * GeoIP
    * LDAP
-   * PAM
    * router access
    * sqlite3
    * XSLT request
@@ -296,7 +294,7 @@ Depends: ${misc:Depends},
  uwsgi-plugin-python3 (= ${binary:Version}),
  uwsgi-plugin-rack-ruby1.8 (= ${binary:Version}),
  uwsgi-plugin-rack-ruby1.9.1 (= ${binary:Version}),
- uwsgi-plugin-v8 (= ${binary:Version})
+ uwsgi-plugin-v8 (= ${binary:Version}) [amd64 armel armhf i386]
 Description: plugins for integration of uWSGI and application
  uWSGI presents a complete stack for networked/clustered web applications,
  implementing message/object passing, caching, RPC and process management.
@@ -327,18 +325,6 @@ Description: Alarm curl plugin for uWSGI
  .
  This package provides alarm_curl plugin for uWSGI.
 
-Package: uwsgi-plugin-alarm-speech
-Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, uwsgi-core (= ${binary:Version})
-Description: Alarm speech plugin for uWSGI
- uWSGI presents a complete stack for networked/clustered web applications,
- implementing message/object passing, caching, RPC and process management.
- It is designed to be fully modular. This means that different plugins can be
- used in order to add compatibility with tons of different technology on top of
- the same core.
- .
- This package provides alarm_speech plugin for uWSGI.
-
 Package: uwsgi-plugin-alarm-xmpp
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, uwsgi-core (= ${binary:Version})
@@ -350,18 +336,6 @@ Description: Alarm XMPP plugin for uWSGI
  the same core.
  .
  This package provides alarm_xmpp plugin for uWSGI.
-
-Package: uwsgi-plugin-coroae
-Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, uwsgi-core (= ${binary:Version})
-Description: Coro::AnyEvent async Perl plugin for uWSGI
- uWSGI presents a complete stack for networked/clustered web applications,
- implementing message/object passing, caching, RPC and process management.
- It is designed to be fully modular. This means that different plugins can be
- used in order to add compatibility with tons of different technology on top of
- the same core.
- .
- This package provides coroae plugin for uWSGI.
 
 Package: uwsgi-plugin-curl-cron
 Architecture: any
@@ -532,18 +506,6 @@ Description: Lua WSAPI plugin for uWSGI (Lua 5.1)
  This package provides Lua WSAPI plugin for uWSGI (linked with Lua 5.1
  runtime).
 
-Package: uwsgi-plugin-pam
-Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, uwsgi-core (= ${binary:Version})
-Description: PAM plugin for uWSGI
- uWSGI presents a complete stack for networked/clustered web applications,
- implementing message/object passing, caching, RPC and process management.
- It is designed to be fully modular. This means that different plugins can be
- used in order to add compatibility with tons of different technology on top of
- the same core.
- .
- This package provides pam plugin for uWSGI.
-
 Package: uwsgi-plugin-psgi
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, uwsgi-core (= ${binary:Version})
@@ -664,7 +626,7 @@ Description: sqlite3 configurations plugin for uWSGI
  configurations from sqlite3 db.
 
 Package: uwsgi-plugin-v8
-Architecture: any
+Architecture: amd64 armel armhf i386
 Depends: ${shlibs:Depends}, ${misc:Depends}, uwsgi-core (= ${binary:Version})
 Description: V8 JavaScript plugin for uWSGI
  uWSGI presents a complete stack for networked/clustered web applications,
@@ -689,7 +651,7 @@ Description: XSLT request plugin for uWSGI
 
 Package: libapache2-mod-proxy-uwsgi
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, apache2
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${uwsgi:apache2:Depends}
 Description: uwsgi proxy module for Apache2 (mod_uwsgi)
  uWSGI presents a complete stack for networked/clustered web applications,
  implementing message/object passing, caching, RPC and process management.
@@ -716,7 +678,7 @@ Description: debugging symbols for Apache2 mod_proxy_uwsgi
 
 Package: libapache2-mod-uwsgi
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, apache2
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${uwsgi:apache2:Depends}
 Conflicts: libapache2-mod-ruwsgi
 Replaces: libapache2-mod-ruwsgi
 Description: uwsgi module for Apache2 (mod_uwsgi)
@@ -743,7 +705,7 @@ Description: debugging symbols for Apache2 mod_uwsgi
 
 Package: libapache2-mod-ruwsgi
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, apache2
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${uwsgi:apache2:Depends}
 Conflicts: libapache2-mod-uwsgi
 Replaces: libapache2-mod-uwsgi
 Description: uwsgi module for Apache2 (mod_Ruwsgi)

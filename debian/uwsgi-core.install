@@ -1,5 +1,6 @@
 uwsgi-core usr/bin
 admin_plugin.so usr/lib/uwsgi/plugins
+alarm_speech_plugin.so usr/lib/uwsgi/plugins
 cache_plugin.so usr/lib/uwsgi/plugins
 carbon_plugin.so usr/lib/uwsgi/plugins
 cgi_plugin.so usr/lib/uwsgi/plugins
@@ -8,7 +9,7 @@ cheaper_busyness_plugin.so usr/lib/uwsgi/plugins
 clock_monotonic_plugin.so usr/lib/uwsgi/plugins
 clock_realtime_plugin.so usr/lib/uwsgi/plugins
 corerouter_plugin.so usr/lib/uwsgi/plugins
-corerouter_plugin.so usr/lib/uwsgi/plugins
+coroae_plugin.so usr/lib/uwsgi/plugins
 echo_plugin.so usr/lib/uwsgi/plugins
 emperor_amqp_plugin.so usr/lib/uwsgi/plugins
 emperor_zeromq_plugin.so usr/lib/uwsgi/plugins
@@ -19,6 +20,7 @@ logfile_plugin.so usr/lib/uwsgi/plugins
 logsocket_plugin.so usr/lib/uwsgi/plugins
 nagios_plugin.so usr/lib/uwsgi/plugins
 notfound_plugin.so usr/lib/uwsgi/plugins
+pam_plugin.so usr/lib/uwsgi/plugins
 ping_plugin.so usr/lib/uwsgi/plugins
 rawrouter_plugin.so usr/lib/uwsgi/plugins
 rawrouter_plugin.so usr/lib/uwsgi/plugins
