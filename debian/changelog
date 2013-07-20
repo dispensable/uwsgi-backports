@@ -1,3 +1,51 @@
+uwsgi (1.9.13-4) unstable; urgency=low
+
+  * Remove hardcoded phpapi-20100525 dependency. (Closes: #715472)
+  * Build uwsgi-plugin-v8 and build depend on libv8-dev only on
+    amd64 armel armhf i386 architectures. (Closes: #715473)
+  * Remove apache2 and apache2-api-20120211 dependencies for
+    libapache2-mod-proxy-uwsgi, libapache2-mod-uwsgi and
+    libapache2-mod-ruwsgi. (Closes: #715485)
+  * Add ${uwsgi:apache2:Depends} substvar to reference Apache2 API version.
+  * Add ${uwsgi:php:Depends} substvar to reference PHP API version.
+  * Add libphp5-embed as a dependency for uwsgi-plugin-php.
+
+ -- Janos Guljas <janos@debian.org>  Wed, 10 Jul 2013 22:23:20 +0200
+
+uwsgi (1.9.13-3) unstable; urgency=low
+
+  * debian/uwsgi-core.install.
+    - Include alarm_speech, coroae and pem plugins into the uwsgi-core
+      package.
+
+ -- Janos Guljas <janos@debian.org>  Tue, 09 Jul 2013 02:24:32 +0200
+
+uwsgi (1.9.13-2) unstable; urgency=low
+
+  * Move plugins from binary packges to uwsgi-core package as they have
+    dependencies with priority set to required:
+    - alarm_speech
+    - coroae
+    - pam
+
+ -- Janos Guljas <janos@debian.org>  Tue, 09 Jul 2013 01:56:41 +0200
+
+uwsgi (1.9.13-1) unstable; urgency=low
+
+  * New upstream release.
+  * Update dependencies to build with Apache 2.4. (Closes: #709468)
+    - Remove apache2-threaded-dev.
+    - Add apache2-dev (>> 2.4~).
+    - Depend lbapache2-mod-proxy-uwsgi, ibapache2-mod-uwsgi and
+       libapache2-mod-ruwsgi on apache2-api-20120211.
+  * Update postinst and prerm scripts to use apache2-maintscript-helper.
+  * Add debian/patches/emperor-pg-fix-cflags.patch.
+    - Remove -Wformat-security flag to fix build error
+  * debian/uwsgi-core.docs:
+    - Remove uwsgi_API.txt.
+
+ -- Janos Guljas <janos@debian.org>  Mon, 08 Jul 2013 14:06:14 +0200
+
 uwsgi (1.9.11-1) unstable; urgency=low
 
   * New upstream release.
