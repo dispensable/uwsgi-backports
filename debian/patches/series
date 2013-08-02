@@ -1,10 +1,8 @@
-000000_01_adjust_lua_plugin_buildscript.patch
 000000_02_remove_assignments_to_LD_RUN_PATH.patch
 000000_04_strip_uwsgi_shebang_from_examples.patch
 fix-reload-process-name.patch
 python-plugin_remove_assignments_to_LD_RUN_PATH.patch
 remove-php-libs.patch
 fix-php-ldflags.patch
-alarm_speech-flags.patch
 coroae-logging-format-type.patch
 emperor-pg-fix-cflags.patch
