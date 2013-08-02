@@ -1,6 +1,6 @@
 # uWSGI build system
 
-uwsgi_version = '1.9.13'
+uwsgi_version = '1.9.14'
 
 import os
 import re
@@ -232,7 +232,7 @@ def build_uwsgi(uc, print_only=False):
                 continue
             p = p.strip()
             if p == 'ugreen':
-                if uwsgi_os == 'OpenBSD' or uwsgi_cpu[0:3] == 'arm' or uwsgi_os == 'Haiku' or uwsgi_os.startswith('CYGWIN'):
+                if uwsgi_os == 'OpenBSD' or uwsgi_cpu[0:3] == 'arm' or uwsgi_os == 'Haiku' or uwsgi_os.startswith('CYGWIN') or (uwsgi_os == 'Darwin' and uwsgi_os_k.startswith('8')):
                     continue
             epc += "UDEP(%s);" % p
             eplc += "ULEP(%s);" % p
@@ -316,7 +316,7 @@ def build_uwsgi(uc, print_only=False):
                 p = p.strip()
 
                 if p == 'ugreen':
-                    if uwsgi_os == 'OpenBSD' or uwsgi_cpu[0:3] == 'arm' or uwsgi_os == 'Haiku' or uwsgi_os.startswith('CYGWIN'):
+                    if uwsgi_os == 'OpenBSD' or uwsgi_cpu[0:3] == 'arm' or uwsgi_os == 'Haiku' or uwsgi_os.startswith('CYGWIN') or (uwsgi_os == 'Darwin' and uwsgi_os_k.startswith('8')):
                         continue
                 path = 'plugins/%s' % p
                 path = path.rstrip('/')
@@ -511,7 +511,7 @@ class uConf(object):
             'core/offload', 'core/io', 'core/static', 'core/websockets', 'core/spooler', 'core/snmp', 'core/exceptions', 'core/config',
             'core/setup_utils', 'core/clock', 'core/init', 'core/buffer', 'core/reader', 'core/writer', 'core/alarm', 'core/cron',
             'core/plugins', 'core/lock', 'core/cache', 'core/daemons', 'core/errors', 'core/hash', 'core/master_events', 'core/chunked',
-            'core/queue', 'core/event', 'core/signal', 'core/strings', 'core/progress', 'core/timebomb', 'core/ini',
+            'core/queue', 'core/event', 'core/signal', 'core/strings', 'core/progress', 'core/timebomb', 'core/ini', 'core/fsmon',
             'core/rpc', 'core/gateway', 'core/loop', 'core/cookie', 'core/querystring', 'core/rb_timers', 'core/transformations', 'core/uwsgi']
         # add protocols
         self.gcc_list.append('proto/base')
@@ -585,7 +585,7 @@ class uConf(object):
         if gcc_major >= 4:
             self.cflags = self.cflags + [ '-Wextra', '-Wno-unused-parameter', '-Wno-missing-field-initializers' ]
         if (gcc_major == 4 and gcc_minor >= 8) or gcc_major > 4:
-            self.cflags.append('-Wno-format')
+            self.cflags.append('-Wno-format -Wno-format-security')
 
         self.ldflags = os.environ.get("LDFLAGS", "").split()
         self.libs = ['-lpthread', '-lm', '-rdynamic']
@@ -694,6 +694,11 @@ class uConf(object):
             self.libs.append('-lroot')
 
         if uwsgi_os == 'Darwin':
+            if uwsgi_os_k.startswith('8'):
+                self.cflags.append('-DUNSETENV_VOID')
+                self.cflags.append('-DNO_SENDFILE')
+                self.cflags.append('-DNO_EXECINFO')
+                self.cflags.append('-DOLD_REALPATH')
             self.cflags.append('-mmacosx-version-min=10.5')
             if GCC in ('clang',):
                 self.libs.remove('-rdynamic')
@@ -825,7 +830,7 @@ class uConf(object):
                 if int(sun_major) >= 5:
                     if int(sun_minor) >= 10:
                         filemonitor_mode = 'port'
-            elif uwsgi_os in ('Darwin', 'FreeBSD'):
+            elif uwsgi_os in ('Darwin', 'FreeBSD', 'OpenBSD', 'NetBSD', 'DragonFly'):
                 filemonitor_mode = 'kqueue'
 
         if filemonitor_mode == 'inotify':

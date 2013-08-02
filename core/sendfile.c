@@ -10,7 +10,7 @@ ssize_t uwsgi_sendfile_do(int sockfd, int filefd, size_t pos, size_t len) {
         int sf_ret = sendfile(filefd, sockfd, pos, len, NULL,  &sf_len, 0);
         if (sf_ret == 0 || (sf_ret == -1 && errno == EAGAIN)) return sf_len;
         return -1;
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) && !defined(NO_SENDFILE)
 	off_t sf_len = len;
 	int sf_ret = sendfile(filefd, sockfd, pos, &sf_len, NULL, 0);
 	if (sf_ret == 0 || (sf_ret == -1 && errno == EAGAIN)) return sf_len;
@@ -71,5 +71,6 @@ int uwsgi_simple_sendfile(struct wsgi_request *wsgi_req, int fd, size_t pos, siz
                         return -1;
                 }
         }
+
 	return 0;
 }

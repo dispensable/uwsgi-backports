@@ -375,6 +375,8 @@ int master_loop(char **argv, char **environ) {
 	uwsgi_start_legions();
 #endif
 
+	uwsgi_add_reload_fds();
+
 	uwsgi_cache_start_sweepers();
 	uwsgi_cache_start_sync_servers();
 
@@ -497,6 +499,9 @@ int master_loop(char **argv, char **environ) {
                 usl = usl->next;
         }
         uwsgi_check_touches(uwsgi.touch_signal);
+
+	// fsmon
+	uwsgi_fsmon_setup();
 
 	// setup cheaper algos (can be stacked)
 	uwsgi.cheaper_algo = uwsgi_cheaper_algo_spare;
@@ -698,6 +703,7 @@ int master_loop(char **argv, char **environ) {
 
 			// get listen_queue status
 			struct uwsgi_socket *uwsgi_sock = uwsgi.sockets;
+			int tmp_queue = 0;
 			while (uwsgi_sock) {
 				if (uwsgi_sock->family == AF_INET) {
 					uwsgi_sock->queue = uwsgi_get_tcp_info(uwsgi_sock->fd);
@@ -709,8 +715,14 @@ int master_loop(char **argv, char **environ) {
 				}
 #endif
 #endif
+
+				if (uwsgi_sock->queue > tmp_queue) {
+					tmp_queue = uwsgi_sock->queue;
+				}
 				uwsgi_sock = uwsgi_sock->next;
 			}
+			// fix queue size on multiple sockets
+			uwsgi.shared->load = tmp_queue;
 
 			// check if some worker has to die (harakiri, evil checks...)
 			uwsgi_master_check_workers_deadline();

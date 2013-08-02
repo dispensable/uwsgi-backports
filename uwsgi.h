@@ -141,7 +141,15 @@ extern "C" {
 #define __EXTENSIONS__
 #endif
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <stdio.h>
+#ifdef __UCLIBC__
+#include <sched.h>
+#endif
+#undef _GNU_SOURCE
+
 #include <stdlib.h>
 #include <stddef.h>
 #include <signal.h>
@@ -212,8 +220,6 @@ extern "C" {
 
 
 #ifdef __linux__
-
-
 #include <sched.h>
 #include <sys/prctl.h>
 #include <linux/limits.h>
@@ -346,6 +352,9 @@ struct uwsgi_buffer {
 	size_t pos;
 	size_t len;
 	size_t limit;
+#ifdef UWSGI_DEBUG_BUFFER
+	int freed;
+#endif
 };
 
 struct uwsgi_string_list {
@@ -1097,6 +1106,9 @@ struct uwsgi_route {
 	void *data3;
 	size_t data3_len;
 
+	void *data4;
+	size_t data4_len;
+
 	// 64bit value for custom usage
 	uint64_t custom;
 
@@ -1434,6 +1446,7 @@ struct wsgi_request {
 	ssize_t chunked_input_chunk_len;
 	size_t chunked_input_need;
 	uint8_t chunked_input_complete;
+        size_t chunked_input_decapitate;
 
 	uint64_t stream_id;
 
@@ -1568,6 +1581,9 @@ struct uwsgi_server {
 	char *procname_master;
 	char *procname;
 
+	// daemontools-like envdir
+	struct uwsgi_string_list *envdirs;
+
 	char *requested_clock;
 	struct uwsgi_clock *clocks;
 	struct uwsgi_clock *clock;
@@ -1666,6 +1682,7 @@ struct uwsgi_server {
 	char *emperor_procname;
 	int emperor_fd;
 	int emperor_queue;
+	int emperor_nofollow;
 	int emperor_tyrant;
 	int emperor_tyrant_nofollow;
 	int emperor_fd_config;
@@ -2000,6 +2017,9 @@ struct uwsgi_server {
 	rlim_t evil_reload_on_as;
 	rlim_t evil_reload_on_rss;
 
+	struct uwsgi_string_list *reload_on_fd;
+	struct uwsgi_string_list *brutal_reload_on_fd;
+
 	struct uwsgi_string_list *touch_reload;
 	struct uwsgi_string_list *touch_chain_reload;
 	struct uwsgi_string_list *touch_workers_reload;
@@ -2008,6 +2028,10 @@ struct uwsgi_server {
 	struct uwsgi_string_list *touch_logreopen;
 	struct uwsgi_string_list *touch_exec;
 	struct uwsgi_string_list *touch_signal;
+
+	struct uwsgi_string_list *fs_reload;
+	struct uwsgi_string_list *fs_brutal_reload;
+	struct uwsgi_string_list *fs_signal;
 
 	int propagate_touch;
 
@@ -2801,6 +2825,7 @@ int uwsgi_cache_set2(struct uwsgi_cache *, char *, uint16_t, char *, uint64_t, u
 int uwsgi_cache_del2(struct uwsgi_cache *, char *, uint16_t, uint64_t, uint16_t);
 char *uwsgi_cache_get2(struct uwsgi_cache *, char *, uint16_t, uint64_t *);
 char *uwsgi_cache_get3(struct uwsgi_cache *, char *, uint16_t, uint64_t *, uint64_t *);
+char *uwsgi_cache_get4(struct uwsgi_cache *, char *, uint16_t, uint64_t *, uint64_t *);
 uint32_t uwsgi_cache_exists2(struct uwsgi_cache *, char *, uint16_t);
 struct uwsgi_cache *uwsgi_cache_create(char *);
 struct uwsgi_cache *uwsgi_cache_by_name(char *);
@@ -2982,7 +3007,7 @@ time_t timegm(struct tm *);
 #endif
 
 size_t uwsgi_str_num(char *, int);
-
+size_t uwsgi_str_occurence(char *, size_t, char);
 
 int uwsgi_proto_uwsgi_parser(struct wsgi_request *);
 int uwsgi_proto_base_write(struct wsgi_request *, char *, size_t);
@@ -3022,6 +3047,8 @@ void uwsgi_add_socket_from_fd(struct uwsgi_socket *, int);
 char *uwsgi_split3(char *, size_t, char, char **, size_t *, char **, size_t *, char **, size_t *);
 char *uwsgi_split4(char *, size_t, char, char **, size_t *, char **, size_t *, char **, size_t *, char **, size_t *);
 char *uwsgi_netstring(char *, size_t, char **, size_t *);
+
+char *uwsgi_str_split_nget(char *, size_t, char, size_t, size_t *);
 
 int uwsgi_get_socket_num(struct uwsgi_socket *);
 struct uwsgi_socket *uwsgi_new_socket(char *);
@@ -3395,6 +3422,7 @@ void uwsgi_fixup_routes(struct uwsgi_route *);
 void uwsgi_reload(char **);
 
 char *uwsgi_chomp(char *);
+char *uwsgi_chomp2(char *);
 int uwsgi_file_to_string_list(char *, struct uwsgi_string_list **);
 void uwsgi_backtrace(int);
 void uwsgi_check_logrotate(void);
@@ -3998,6 +4026,7 @@ void uwsgi_exceptions_handler_thread_start(void);
 struct uwsgi_stats_pusher_instance *uwsgi_stats_pusher_add(struct uwsgi_stats_pusher *, char *);
 
 int plugin_already_loaded(const char *);
+struct uwsgi_plugin *uwsgi_plugin_get(const char *);
 
 struct uwsgi_cache_magic_context {
 	char *cmd;
@@ -4076,12 +4105,22 @@ int uwsgi_is_again();
 void uwsgi_disconnect(struct wsgi_request *);
 int uwsgi_ready_fd(struct wsgi_request *);
 
+void uwsgi_envdir(char *);
+void uwsgi_envdirs(struct uwsgi_string_list *);
+void uwsgi_opt_envdir(char *, char *, void *);
+
+void uwsgi_add_reload_fds();
+void uwsgi_add_reload_fds();
+
 void uwsgi_check_emperor(void);
 #ifdef UWSGI_AS_SHARED_LIBRARY
 int uwsgi_init(int, char **, char **);
 #endif
 
 int uwsgi_master_check_cron_death(int);
+int uwsgi_register_fsmon(struct uwsgi_string_list *);
+int uwsgi_fsmon_event(int);
+void uwsgi_fsmon_setup();
 
 #ifdef __cplusplus
 }
