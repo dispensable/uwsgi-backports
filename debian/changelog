@@ -1,3 +1,9 @@
+uwsgi (1.9.14-1~precise1) precise; urgency=low
+
+  * Backport 1.9.14 to Ubuntu Precise
+
+ -- Max Arnold <arnold.maxim@gmail.com>  Fri, 02 Aug 2013 11:46:22 +0700
+
 uwsgi (1.9.13-4~precise1) precise; urgency=low
 
   * Backport 1.9.13 to Ubuntu Precise
