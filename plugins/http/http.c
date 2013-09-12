@@ -10,6 +10,7 @@ struct uwsgi_http uhttp;
 
 struct uwsgi_option http_options[] = {
 	{"http", required_argument, 0, "add an http router/server on the specified address", uwsgi_opt_corerouter, &uhttp, 0},
+	{"httprouter", required_argument, 0, "add an http router/server on the specified address", uwsgi_opt_corerouter, &uhttp, 0},
 #ifdef UWSGI_SSL
 	{"https", required_argument, 0, "add an https router/server on the specified address with specified certificate and key", uwsgi_opt_https, &uhttp, 0},
 	{"https2", required_argument, 0, "add an https/spdy router/server using keyval options", uwsgi_opt_https2, &uhttp, 0},
@@ -207,8 +208,19 @@ int http_headers_parse(struct corerouter_peer *peer) {
 	while (ptr < watermark) {
 		if (*ptr == '?' && !query_string) {
 			// PATH_INFO must be url-decoded !!!
-			hr->path_info_len = ptr - base;
-			hr->path_info = uwsgi_malloc(hr->path_info_len);
+			if (!hr->path_info) {
+				hr->path_info_len = ptr - base;
+				hr->path_info = uwsgi_malloc(hr->path_info_len);
+			}
+			else {
+				size_t new_path_info = ptr - base;
+				if (new_path_info > hr->path_info_len) {
+					char *tmp_buf = realloc(hr->path_info, new_path_info);
+					if (!tmp_buf) return -1;
+					hr->path_info = tmp_buf;
+				}
+				hr->path_info_len = new_path_info;
+			}
 			http_url_decode(base, &hr->path_info_len, hr->path_info);
 			if (uwsgi_buffer_append_keyval(out, "PATH_INFO", 9, hr->path_info, hr->path_info_len)) return -1;
 			query_string = ptr + 1;
@@ -219,8 +231,19 @@ int http_headers_parse(struct corerouter_peer *peer) {
 			if (uwsgi_buffer_append_keyval(out, "REQUEST_URI", 11, base, ptr - base)) return -1;
 			if (!query_string) {
 				// PATH_INFO must be url-decoded !!!
-				hr->path_info_len = ptr - base;
-				hr->path_info = uwsgi_malloc(hr->path_info_len);
+				if (!hr->path_info) {
+                                	hr->path_info_len = ptr - base;
+                                	hr->path_info = uwsgi_malloc(hr->path_info_len);
+                        	}
+                        	else {
+                                	size_t new_path_info = ptr - base;
+                                	if (new_path_info > hr->path_info_len) {
+                                        	char *tmp_buf = realloc(hr->path_info, new_path_info);
+                                        	if (!tmp_buf) return -1;
+                                        	hr->path_info = tmp_buf;
+                                	}
+                                	hr->path_info_len = new_path_info;
+                        	}
 				http_url_decode(base, &hr->path_info_len, hr->path_info);
 				if (uwsgi_buffer_append_keyval(out, "PATH_INFO", 9, hr->path_info, hr->path_info_len)) return -1;
 				if (uwsgi_buffer_append_keyval(out, "QUERY_STRING", 12, "", 0)) return -1;

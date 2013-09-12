@@ -191,6 +191,8 @@ void daemonize(char *logfile) {
 // get current working directory
 char *uwsgi_get_cwd() {
 
+	if (uwsgi.force_cwd) return uwsgi.force_cwd;
+
 	// set this to static to avoid useless reallocations in stats mode
 	static size_t newsize = 256;
 
@@ -370,17 +372,48 @@ void uwsgi_as_root() {
 #endif
 		}
 
+
+		struct uwsgi_string_list *usl;
+		uwsgi_foreach(usl, uwsgi.wait_for_interface) {
+			if (!uwsgi.wait_for_interface_timeout) {
+				uwsgi.wait_for_interface_timeout = 60;
+			}
+			uwsgi_log("waiting for interface %s (max %d seconds) ...\n", usl->value, uwsgi.wait_for_interface_timeout);
+			int counter = 0;
+			for(;;) {
+				if (counter > uwsgi.wait_for_interface_timeout) {
+					uwsgi_log("interface %s unavailable after %d seconds\n", usl->value, counter);
+					exit(1);
+				}
+				unsigned int index = if_nametoindex(usl->value);
+				if (index > 0) {
+					uwsgi_log("interface %s found with index %u\n", usl->value, index);
+					break;
+				}	
+				else {
+					sleep(1);
+					counter++;
+				}
+			}
+		}
+		
+
 		// now run the scripts needed by root
-		struct uwsgi_string_list *usl = uwsgi.exec_as_root;
-		while (usl) {
+		uwsgi_foreach(usl, uwsgi.exec_as_root) {
 			uwsgi_log("running \"%s\" (as root)...\n", usl->value);
 			int ret = uwsgi_run_command_and_wait(NULL, usl->value);
 			if (ret != 0) {
 				uwsgi_log("command \"%s\" exited with non-zero code: %d\n", usl->value, ret);
 				exit(1);
 			}
-			usl = usl->next;
 		}
+
+		uwsgi_foreach(usl, uwsgi.call_as_root) {
+                        if (uwsgi_call_symbol(usl->value)) {
+                                uwsgi_log("unaable to call function \"%s\"\n", usl->value);
+                        }
+                }
+
 
 		if (uwsgi.gidname) {
 			struct group *ugroup = getgrnam(uwsgi.gidname);
@@ -480,6 +513,31 @@ void uwsgi_as_root() {
 					exit(1);
 				}
 			}
+			struct uwsgi_string_list *usl;
+			size_t ags = 0;
+			uwsgi_foreach(usl, uwsgi.additional_gids) ags++;
+			if (ags > 0) {
+				gid_t *ags_list = uwsgi_calloc(sizeof(gid_t) * ags);
+				size_t g_pos = 0;
+				uwsgi_foreach(usl, uwsgi.additional_gids) {
+					ags_list[g_pos] = atoi(usl->value);
+					if (!ags_list[g_pos]) {
+						struct group *g = getgrnam(usl->value);
+						if (g) {
+							ags_list[g_pos] = g->gr_gid;
+						}
+						else {
+							uwsgi_log("unable to find group %s\n", usl->value);
+							exit(1);
+						}
+					}
+					g_pos++;
+				}
+				if (setgroups(ags, ags_list)) {
+					uwsgi_error("setgroups()");
+					exit(1);
+				}
+			}
 			int additional_groups = getgroups(0, NULL);
 			if (additional_groups > 0) {
 				gid_t *gids = uwsgi_calloc(sizeof(gid_t) * additional_groups);
@@ -536,17 +594,41 @@ void uwsgi_as_root() {
 		}
 #endif
 
+		if (uwsgi.refork) {
+			uwsgi_log("re-fork()ing...\n");
+			pid_t pid = fork();
+			if (pid < 0) {
+				uwsgi_error("fork()");
+				exit(1);
+			}
+			if (pid > 0) {
+				// block all signals
+        			sigset_t smask;
+        			sigfillset(&smask);
+        			sigprocmask(SIG_BLOCK, &smask, NULL);
+				int status;
+				if (waitpid(pid, &status, 0) < 0) {
+					uwsgi_error("waitpid()");
+				}
+				_exit(0);
+			}
+		}	
+
 		// now run the scripts needed by the user
-		usl = uwsgi.exec_as_user;
-		while (usl) {
+		uwsgi_foreach(usl, uwsgi.exec_as_user) {
 			uwsgi_log("running \"%s\" (as uid: %d gid: %d) ...\n", usl->value, (int) getuid(), (int) getgid());
 			int ret = uwsgi_run_command_and_wait(NULL, usl->value);
 			if (ret != 0) {
 				uwsgi_log("command \"%s\" exited with non-zero code: %d\n", usl->value, ret);
 				exit(1);
 			}
-			usl = usl->next;
 		}
+
+		uwsgi_foreach(usl, uwsgi.call_as_user) {
+                        if (uwsgi_call_symbol(usl->value)) {
+                                uwsgi_log("unaable to call function \"%s\"\n", usl->value);
+                        }
+                }
 
 		// we could now patch the binary
 		if (uwsgi.unprivileged_binary_patch) {
@@ -1932,23 +2014,9 @@ void uwsgi_exec_command_with_args(char *cmdline) {
 	exit(1);
 }
 
-int uwsgi_run_command_and_wait(char *command, char *arg) {
+static int uwsgi_run_command_do(char *command, char *arg) {
 
 	char *argv[4];
-	int waitpid_status = 0;
-	pid_t pid = fork();
-	if (pid < 0) {
-		return -1;
-	}
-
-	if (pid > 0) {
-		if (waitpid(pid, &waitpid_status, 0) < 0) {
-			uwsgi_error("waitpid()");
-			return -1;
-		}
-
-		return WEXITSTATUS(waitpid_status);
-	}
 
 #ifdef __linux__
 	if (prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0)) {
@@ -1975,6 +2043,54 @@ int uwsgi_run_command_and_wait(char *command, char *arg) {
 	//never here
 	exit(1);
 }
+
+int uwsgi_run_command_and_wait(char *command, char *arg) {
+
+        int waitpid_status = 0;
+        pid_t pid = fork();
+        if (pid < 0) {
+                return -1;
+        }
+
+        if (pid > 0) {
+                if (waitpid(pid, &waitpid_status, 0) < 0) {
+                        uwsgi_error("uwsgi_run_command_and_wait()/waitpid()");
+                        return -1;
+                }
+
+                return WEXITSTATUS(waitpid_status);
+        }
+	return uwsgi_run_command_do(command, arg);
+}
+
+int uwsgi_run_command_putenv_and_wait(char *command, char *arg, char **envs, unsigned int nenvs) {
+
+        int waitpid_status = 0;
+        pid_t pid = fork();
+        if (pid < 0) {
+                return -1; 
+        }
+
+        if (pid > 0) {
+                if (waitpid(pid, &waitpid_status, 0) < 0) {
+                        uwsgi_error("uwsgi_run_command_and_wait()/waitpid()");
+                        return -1;
+                }
+
+                return WEXITSTATUS(waitpid_status);
+        }
+
+	unsigned int i;
+	for(i=0;i<nenvs;i++) {
+		if (putenv(envs[i])) {
+			uwsgi_error("uwsgi_run_command_putenv_and_wait()/putenv()");
+			exit(1);
+		}
+	}
+
+        return uwsgi_run_command_do(command, arg);
+}
+
 
 pid_t uwsgi_run_command(char *command, int *stdin_fd, int stdout_fd) {
 
@@ -2319,9 +2435,6 @@ static struct uwsgi_unshare_id uwsgi_unshare_list[] = {
 #ifdef CLONE_FILES
 	{"files", CLONE_FILES},
 #endif
-#ifdef CLONE_FS
-	{"fs", CLONE_FS},
-#endif
 #ifdef CLONE_NEWIPC
 	{"ipc", CLONE_NEWIPC},
 #endif
@@ -2333,6 +2446,7 @@ static struct uwsgi_unshare_id uwsgi_unshare_list[] = {
 #endif
 #ifdef CLONE_NEWNS
 	{"ns", CLONE_NEWNS},
+	{"fs", CLONE_NEWNS},
 	{"mount", CLONE_NEWNS},
 #endif
 #ifdef CLONE_SYSVSEM
@@ -2356,7 +2470,7 @@ static int uwsgi_get_unshare_id(char *name) {
 	return -1;
 }
 
-void uwsgi_build_unshare(char *what) {
+void uwsgi_build_unshare(char *what, int *mask) {
 
 	char *list = uwsgi_str(what);
 
@@ -2364,7 +2478,7 @@ void uwsgi_build_unshare(char *what) {
 	while (p != NULL) {
 		int u_id = uwsgi_get_unshare_id(p);
 		if (u_id != -1) {
-			uwsgi.unshare |= u_id;
+			*mask |= u_id;
 		}
 		p = strtok(NULL, ",");
 	}
@@ -3304,6 +3418,13 @@ error:
 	return -1;
 }
 
+int uwsgi_call_symbol(char *symbol) {
+	void (*func)(void) = dlsym(RTLD_DEFAULT, symbol);
+	if (!func) return -1;
+	func();
+	return 0;
+}
+
 int uwsgi_plugin_modifier1(char *plugin) {
 	int ret = -1;
 	char *symbol_name = uwsgi_concat2(plugin, "_plugin");
@@ -3735,4 +3856,10 @@ void uwsgi_envdirs(struct uwsgi_string_list *envdirs) {
 
 void uwsgi_opt_envdir(char *opt, char *value, void *foobar) {
 	uwsgi_envdir(value);
+}
+
+void uwsgi_exit(int status) {
+	uwsgi.last_exit_code = status;
+	// disable macro expansion
+	(exit)(status);
 }

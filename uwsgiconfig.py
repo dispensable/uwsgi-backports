@@ -1,6 +1,6 @@
 # uWSGI build system
 
-uwsgi_version = '1.9.14'
+uwsgi_version = '1.9.15'
 
 import os
 import re
@@ -570,6 +570,14 @@ class uConf(object):
         if additional_include_paths:
             for ipath in additional_include_paths.split():
                 self.include_path.append(ipath)
+
+        if 'UWSGI_REMOVE_INCLUDES' in os.environ:
+            for inc in os.environ['UWSGI_REMOVE_INCLUDES'].split(','):
+                try:
+                    self.include_path.remove(inc)
+                except:
+                    pass
+
             
         if not mute:
             print("detected include path: %s" % self.include_path)
@@ -648,6 +656,10 @@ class uConf(object):
         global uwsgi_version
 
         kvm_list = ['FreeBSD', 'OpenBSD', 'NetBSD', 'DragonFly']
+
+        if 'UWSGI_AS_LIB' in os.environ:
+            self.set('as_shared_library', 'true')
+            self.set('bin_name', os.environ['UWSGI_AS_LIB'])
 
         if self.has_include('ifaddrs.h'):
             self.cflags.append('-DUWSGI_HAS_IFADDRS')
@@ -918,10 +930,11 @@ class uConf(object):
             self.libs.append('-lcap')
             report['capabilities'] = True
 
-        if self.has_include('matheval.h'):
-            self.cflags.append("-DUWSGI_MATHEVAL")
-            self.libs.append('-lmatheval')
-            report['matheval'] = True
+        if self.get('matheval'):
+            if (self.get('matheval') == 'auto' and self.has_include('matheval.h')) or self.get('matheval') == 'true':
+                self.cflags.append("-DUWSGI_MATHEVAL")
+                self.libs.append('-lmatheval')
+                report['matheval'] = True
 
         has_json = False
         has_uuid = False
@@ -1113,7 +1126,7 @@ class uConf(object):
                 report['xml'] = 'expat'
 
         if self.get('plugin_dir'):
-            self.cflags.append('-DUWSGI_PLUGIN_DIR=\\"%s\\"' % self.get('plugin_dir'))
+            self.cflags.append('-DUWSGI_PLUGIN_DIR="\\"%s\\""' % self.get('plugin_dir'))
             report['plugin_dir'] = self.get('plugin_dir')
 
         if self.get('debug'):
@@ -1322,10 +1335,10 @@ if __name__ == "__main__":
         bconf = os.environ.get('UWSGI_PROFILE','default.ini')
         try:
             bconf = sys.argv[3]
-            if not bconf.endswith('.ini'):
-                bconf += '.ini'
         except:
             pass
+        if not bconf.endswith('.ini'):
+            bconf += '.ini'
         if not '/' in bconf:
             bconf = 'buildconf/%s' % bconf
         uc = uConf(bconf)
@@ -1350,6 +1363,7 @@ if __name__ == "__main__":
         os.system("rm -f lib/*.o")
         os.system("rm -f plugins/*/*.o")
         os.system("rm -f build/*.o")
+        os.system("rm -f core/dot_h.c")
     elif cmd == '--check':
         os.system("cppcheck --max-configs=1000 --enable=all -q core/ plugins/ proto/ lib/ apache2/")
 
