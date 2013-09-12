@@ -1,0 +1,15 @@
+Description: Add include path for the GNUstep libraries.
+Author: Janos Guljas <janos@debian.org>
+Last-Update: 2012-04-24
+
+--- a/plugins/alarm_speech/uwsgiplugin.py
++++ b/plugins/alarm_speech/uwsgiplugin.py
+@@ -1,6 +1,6 @@
+ NAME='alarm_speech'
+ 
+-CFLAGS = []
++CFLAGS = ['-I /usr/include/GNUstep']
+ LDFLAGS = []
+-LIBS = ['-framework appkit']
++LIBS = []
+ GCC_LIST = ['alarm_speech.m']

@@ -1,14 +1,40 @@
-uwsgi (1.9.14-1~precise1) precise; urgency=low
+uwsgi (1.9.15-1~precise1) precise; urgency=low
 
-  * Backport 1.9.14 to Ubuntu Precise
+  * New upstream release (1.9.15) for precise.
+  * TODO: pty plugin
 
- -- Max Arnold <arnold.maxim@gmail.com>  Fri, 02 Aug 2013 11:46:22 +0700
+ -- Max Arnold <arnold.maxim@gmail.com>  Thu, 12 Sep 2013 16:54:16 +0700
 
-uwsgi (1.9.13-4~precise1) precise; urgency=low
+uwsgi (1.9.14-4chl1~precise1) precise; urgency=low
 
-  * Backport 1.9.13 to Ubuntu Precise
+  * Change dependency on Zeromq to 3.2.x. 
 
- -- Max Arnold <arnold.maxim@gmail.com>  Sun, 23 Jun 2013 19:12:00 +0700
+ -- Chris Lea <chl@chrislea.com>  Tue, 30 Jul 2013 16:25:31 -0700
+
+uwsgi (1.9.14-3chl1~precise1) precise; urgency=low
+
+  * Add "-Wno-format" to CFLAGS to fix build issue on
+    Ubuntu 12.04 i386 builds. 
+
+ -- Chris Lea <chl@chrislea.com>  Sun, 21 Jul 2013 21:32:15 -0700
+
+uwsgi (1.9.14-2chl1~precise1) precise; urgency=low
+
+  * Fix dependency on apache2 and PHP. 
+
+ -- Chris Lea <chl@chrislea.com>  Sun, 21 Jul 2013 16:43:20 -0700
+
+uwsgi (1.9.14-1chl1~precise1) precise; urgency=low
+
+  * Backport for precise. 
+
+ -- Chris Lea <chl@chrislea.com>  Sun, 21 Jul 2013 14:52:16 -0700
+
+uwsgi (1.9.13-4build1) precise; urgency=low
+
+  * Rebuild for PHP 5.5.
+
+ -- Colin Watson <cjwatson@ubuntu.com>  Tue, 16 Jul 2013 01:48:11 +0100
 
 uwsgi (1.9.13-4) unstable; urgency=low
 
