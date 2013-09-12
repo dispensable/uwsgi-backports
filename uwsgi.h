@@ -130,6 +130,7 @@ extern "C" {
 	uwsgi.gp_cnt++;\
 	}\
 
+#define uwsgi_foreach(x, y) for(x=y;x;x = x->next) 
 
 
 #ifndef __need_IOV_MAX
@@ -137,8 +138,12 @@ extern "C" {
 #endif
 
 #ifdef __sun__
+#ifndef _XPG4_2
 #define _XPG4_2
+#endif
+#ifndef __EXTENSIONS__
 #define __EXTENSIONS__
+#endif
 #endif
 
 #ifndef _GNU_SOURCE
@@ -165,6 +170,7 @@ extern "C" {
 #endif
 #endif
 #include <sys/socket.h>
+#include <net/if.h>
 #ifdef __linux__
 #ifndef MSG_FASTOPEN
 #define MSG_FASTOPEN   0x20000000
@@ -609,6 +615,8 @@ struct uwsgi_legion {
 
 	int quorum;
 	int changed;
+	// if set the next packet will be a death-announce
+	int dead;
 
 	// set to 1 first time when quorum is reached
 	int joined;
@@ -926,6 +934,9 @@ struct uwsgi_socket {
 	int lazy;
 	int shared;
 	int from_shared;
+
+	// used for avoiding vacuum mess
+	ino_t inode;
 };
 
 struct uwsgi_server;
@@ -1561,11 +1572,16 @@ void uwsgi_opt_load_config(char *, char *, void *);
 #define uwsgi_instance_is_dying (uwsgi.status.gracefully_destroying || uwsgi.status.brutally_destroying)
 #define uwsgi_instance_is_reloading (uwsgi.status.gracefully_reloading || uwsgi.status.brutally_reloading)
 
+#define exit(x) uwsgi_exit(x)
+
 struct uwsgi_server {
 
 	// store the machine hostname
 	char hostname[256];
 	int hostname_len;
+
+	// used to store the exit code for atexit hooks
+	int last_exit_code;
 
 	int (*proto_hooks[UWSGI_PROTO_MAX_CHECK]) (struct wsgi_request *, char *, char *, uint16_t);
 	struct uwsgi_configurator *configurators;
@@ -1634,6 +1650,9 @@ struct uwsgi_server {
 	int master_as_root;
 	// kill the stack on SIGTERM (instead of brutal reloading)
 	int die_on_term;
+
+	// force the first gateway without a master
+	int force_gateway;
 
 	// disable fd passing on unix socket
 	int no_fd_passing;
@@ -1752,6 +1771,8 @@ struct uwsgi_server {
 	int dump_options;
 	// show ini representation of the current config
 	int show_config;
+	// enable strict mode (only registered options can be used)
+	int strict;
 
 	// list loaded features
 	int cheaper_algo_list;
@@ -1783,6 +1804,7 @@ struct uwsgi_server {
 	char *uidname;
 	char *gidname;
 	int no_initgroups;
+	struct uwsgi_string_list *additional_gids;
 
 #ifdef UWSGI_CAP
 	cap_value_t *cap;
@@ -1791,7 +1813,9 @@ struct uwsgi_server {
 
 #ifdef __linux__
 	int unshare;
+	int emperor_clone;
 #endif
+	int refork;
 
 	int ignore_sigpipe;
 	int ignore_write_errors;
@@ -1809,8 +1833,9 @@ struct uwsgi_server {
 	// mostly useless
 	char *mode;
 
-	// binary path the worker image
+	// binary patch the worker image
 	char *worker_exec;
+	char *worker_exec2;
 
 	// this must be UN-shared
 	struct uwsgi_gateway_socket *gateway_sockets;
@@ -1876,6 +1901,30 @@ struct uwsgi_server {
 	struct uwsgi_string_list *exec_as_user_atexit;
 	struct uwsgi_string_list *exec_pre_app;
 	struct uwsgi_string_list *exec_post_app;
+
+        struct uwsgi_string_list *exec_as_vassal;
+        struct uwsgi_string_list *exec_as_emperor;
+
+	struct uwsgi_string_list *call_pre_jail;
+        struct uwsgi_string_list *call_post_jail;
+        struct uwsgi_string_list *call_in_jail;
+        struct uwsgi_string_list *call_as_root;
+        struct uwsgi_string_list *call_as_user;
+        struct uwsgi_string_list *call_as_user_atexit;
+        struct uwsgi_string_list *call_pre_app;
+        struct uwsgi_string_list *call_post_app;
+
+        struct uwsgi_string_list *call_as_vassal;
+        struct uwsgi_string_list *call_as_vassal1;
+        struct uwsgi_string_list *call_as_vassal3;
+
+        struct uwsgi_string_list *call_as_emperor;
+        struct uwsgi_string_list *call_as_emperor1;
+        struct uwsgi_string_list *call_as_emperor2;
+        struct uwsgi_string_list *call_as_emperor4;
+
+	struct uwsgi_string_list *wait_for_interface;
+	int wait_for_interface_timeout;
 
 	char *privileged_binary_patch;
 	char *unprivileged_binary_patch;
@@ -2160,7 +2209,7 @@ struct uwsgi_server {
 	mode_t chmod_logfile_value;
 	int listen_queue;
 
-	char *file_config;
+	char *fallback_config;
 
 #ifdef UWSGI_ROUTING
 	struct uwsgi_router *routers;
@@ -2180,6 +2229,7 @@ struct uwsgi_server {
 	int skip_zero;
 	int skip_atexit;
 
+	char *force_cwd;
 	char *chdir;
 	char *chdir2;
 
@@ -3109,6 +3159,8 @@ void uwsgi_add_sockets_to_queue(int, int);
 void uwsgi_del_sockets_from_queue(int);
 
 int uwsgi_run_command_and_wait(char *, char *);
+int uwsgi_run_command_putenv_and_wait(char *, char *, char **, unsigned int);
+int uwsgi_call_symbol(char *);
 
 void uwsgi_manage_signal_cron(time_t);
 pid_t uwsgi_run_command(char *, int *, int);
@@ -3249,7 +3301,7 @@ int uwsgi_is_bad_connection(int);
 int uwsgi_long2str2n(unsigned long long, char *, int);
 
 #ifdef __linux__
-void uwsgi_build_unshare(char *);
+void uwsgi_build_unshare(char *, int *);
 #ifdef MADV_MERGEABLE
 void uwsgi_linux_ksm_map(void);
 #endif
@@ -3872,6 +3924,7 @@ void uwsgi_opt_legion_hook(char *, char *, void *);
 void uwsgi_legion_register_hook(struct uwsgi_legion *, char *, char *);
 void uwsgi_opt_legion_scroll(char *, char *, void *);
 void uwsgi_legion_add(struct uwsgi_legion *);
+void uwsgi_legion_announce_death(void);
 char *uwsgi_ssl_rand(size_t);
 void uwsgi_start_legions(void);
 int uwsgi_legion_announce(struct uwsgi_legion *);
@@ -4121,6 +4174,14 @@ int uwsgi_master_check_cron_death(int);
 int uwsgi_register_fsmon(struct uwsgi_string_list *);
 int uwsgi_fsmon_event(int);
 void uwsgi_fsmon_setup();
+
+void uwsgi_exit(int) __attribute__ ((__noreturn__));
+void uwsgi_fallback_config();
+
+struct uwsgi_cache_item *uwsgi_cache_keys(struct uwsgi_cache *, uint64_t *, struct uwsgi_cache_item **);
+void uwsgi_cache_rlock(struct uwsgi_cache *);
+void uwsgi_cache_rwunlock(struct uwsgi_cache *);
+char *uwsgi_cache_item_key(struct uwsgi_cache_item *);
 
 #ifdef __cplusplus
 }

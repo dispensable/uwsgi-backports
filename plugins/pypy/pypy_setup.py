@@ -125,6 +125,20 @@ struct uwsgi_buffer {
 	...;
 };
 
+struct uwsgi_lock_item {
+	...;
+};
+
+struct uwsgi_cache {
+	struct uwsgi_lock_item *lock;
+	...;
+};
+
+struct uwsgi_cache_item {
+	uint64_t keysize;
+	...;
+};
+
 struct uwsgi_server {
 	char hostname[];
 	int mywid;
@@ -184,6 +198,11 @@ int uwsgi_cache_magic_set(char *, uint16_t, char *, uint64_t, uint64_t, uint64_t
 int uwsgi_cache_magic_del(char *, uint16_t, char *);
 int uwsgi_cache_magic_exists(char *, uint16_t, char *);
 int uwsgi_cache_magic_clear(char *);
+struct uwsgi_cache *uwsgi_cache_by_name(char *);
+void uwsgi_cache_rlock(struct uwsgi_cache *);
+void uwsgi_cache_rwunlock(struct uwsgi_cache *);
+char *uwsgi_cache_item_key(struct uwsgi_cache_item *);
+struct uwsgi_cache_item *uwsgi_cache_keys(struct uwsgi_cache *, uint64_t *, struct uwsgi_cache_item **);
 
 int uwsgi_add_file_monitor(uint8_t, char *);
 int uwsgi_add_timer(uint8_t, int);
@@ -244,8 +263,9 @@ it sucks, i will fix it in the near future...
 """
 wsgi_application = None
 
-
-sys.argv.insert(0, ffi.string(lib.uwsgi_binary_path()))
+# fix argv if needed
+if len(sys.argv) == 0:
+    sys.argv.insert(0, ffi.string(lib.uwsgi_binary_path()))
 
 
 """
@@ -332,7 +352,7 @@ class WSGIinput(object):
         self.wsgi_req = wsgi_req
 
     def read(self, size=0):
-        rlen = ffi.new('int64_t*')
+        rlen = ffi.new('ssize_t*')
         chunk = lib.uwsgi_request_body_read(self.wsgi_req, size, rlen)
         if chunk != ffi.NULL:
             return ffi.string(chunk, rlen[0])
@@ -473,7 +493,6 @@ def uwsgi_pypy_uwsgi_register_rpc(name, func, argc=0):
     rpc_func = uwsgi_pypy_RPC(func)
     cb = ffi.callback("int(int, char*[], int[], char*)", rpc_func)
     uwsgi_gc.append(cb)
-    print lib.pypy_plugin
     if lib.uwsgi_register_rpc(ffi.new("char[]", name), ffi.addressof(lib.pypy_plugin), argc, cb) < 0:
         raise Exception("unable to register rpc func %s" % name)
 uwsgi.register_rpc = uwsgi_pypy_uwsgi_register_rpc
@@ -541,6 +560,21 @@ def uwsgi_pypy_uwsgi_cache_del(key, cache=ffi.NULL):
         raise Exception('unable to delete item from the cache')
 uwsgi.cache_del = uwsgi_pypy_uwsgi_cache_del
 
+def uwsgi_pypy_uwsgi_cache_keys(cache=ffi.NULL):
+    uc = lib.uwsgi_cache_by_name(cache)
+    if uc == ffi.NULL:
+        raise Exception('no local uWSGI cache available')
+    l = []
+    lib.uwsgi_cache_rlock(uc)
+    pos = ffi.new('uint64_t *')
+    uci = ffi.new('struct uwsgi_cache_item **')
+    while True:
+        uci[0] = lib.uwsgi_cache_keys(uc, pos, uci)
+        if uci[0] == ffi.NULL: break
+        l.append(ffi.string(lib.uwsgi_cache_item_key(uci[0]), uci[0].keysize))
+    lib.uwsgi_cache_rwunlock(uc)
+    return l
+uwsgi.cache_keys = uwsgi_pypy_uwsgi_cache_keys
 
 def uwsgi_pypy_uwsgi_add_timer(signum, secs):
     if lib.uwsgi_add_timer(signum, secs) < 0:
