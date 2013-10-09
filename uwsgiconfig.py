@@ -1,6 +1,6 @@
 # uWSGI build system
 
-uwsgi_version = '1.9.15'
+uwsgi_version = '1.9.17.1'
 
 import os
 import re
@@ -507,11 +507,11 @@ class uConf(object):
 
         self.config.readfp(open_profile(filename))
         self.gcc_list = ['core/utils', 'core/protocol', 'core/socket', 'core/logging', 'core/master', 'core/master_utils', 'core/emperor',
-            'core/notify', 'core/mule', 'core/subscription', 'core/stats', 'core/sendfile', 'core/async', 'core/master_checks',
+            'core/notify', 'core/mule', 'core/subscription', 'core/stats', 'core/sendfile', 'core/async', 'core/master_checks', 'core/fifo',
             'core/offload', 'core/io', 'core/static', 'core/websockets', 'core/spooler', 'core/snmp', 'core/exceptions', 'core/config',
-            'core/setup_utils', 'core/clock', 'core/init', 'core/buffer', 'core/reader', 'core/writer', 'core/alarm', 'core/cron',
+            'core/setup_utils', 'core/clock', 'core/init', 'core/buffer', 'core/reader', 'core/writer', 'core/alarm', 'core/cron', 'core/hooks',
             'core/plugins', 'core/lock', 'core/cache', 'core/daemons', 'core/errors', 'core/hash', 'core/master_events', 'core/chunked',
-            'core/queue', 'core/event', 'core/signal', 'core/strings', 'core/progress', 'core/timebomb', 'core/ini', 'core/fsmon',
+            'core/queue', 'core/event', 'core/signal', 'core/strings', 'core/progress', 'core/timebomb', 'core/ini', 'core/fsmon', 'core/mount',
             'core/rpc', 'core/gateway', 'core/loop', 'core/cookie', 'core/querystring', 'core/rb_timers', 'core/transformations', 'core/uwsgi']
         # add protocols
         self.gcc_list.append('proto/base')
@@ -692,6 +692,7 @@ class uConf(object):
 
         if uwsgi_os == 'SunOS':
             self.libs.append('-lsendfile')
+            self.libs.append('-lrt')
             self.gcc_list.append('lib/sun_fixes')
             self.ldflags.append('-L/lib')
             if not uwsgi_os_v.startswith('Nexenta'):
@@ -951,6 +952,9 @@ class uConf(object):
             uwsgi_version += self.get('append_version')
 
 
+        if uwsgi_os == 'FreeBSD' and self.has_include('jail.h'):
+            self.cflags.append('-DUWSGI_HAS_FREEBSD_LIBJAIL')
+            self.libs.append('-ljail')
 
         if uwsgi_os == 'Linux':
             if self.get('embed_config'):

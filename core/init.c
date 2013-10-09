@@ -172,6 +172,12 @@ void uwsgi_init_default() {
 	
 	// 1 MB default limit
 	uwsgi.chunked_input_limit = 1024*1024;
+
+	// clear reforked status
+	uwsgi.master_is_reforked = 0;
+
+	uwsgi.master_fifo_fd = -1;
+	uwsgi_master_fifo_prepare();
 }
 
 void uwsgi_setup_reload() {
@@ -216,21 +222,19 @@ void uwsgi_autoload_plugins_by_name(char *argv_zero) {
 		p = original_proc_name;
 	p = strstr(p, "uwsgi_");
 	if (p != NULL) {
-		plugins_requested = strtok(uwsgi_str(p + 6), "_");
-		while (plugins_requested) {
+		char *ctx = NULL;
+		uwsgi_foreach_token(uwsgi_str(p + 6), "_", plugins_requested, ctx) {
 			uwsgi_log("[uwsgi] implicit plugin requested %s\n", plugins_requested);
 			uwsgi_load_plugin(-1, plugins_requested, NULL);
-			plugins_requested = strtok(NULL, "_");
 		}
 	}
 
 	plugins_requested = getenv("UWSGI_PLUGINS");
 	if (plugins_requested) {
 		plugins_requested = uwsgi_concat2(plugins_requested, "");
-		char *p = strtok(plugins_requested, ",");
-		while (p != NULL) {
+		char *p, *ctx = NULL;
+		uwsgi_foreach_token(plugins_requested, ",", p, ctx) {
 			uwsgi_load_plugin(-1, p, NULL);
-			p = strtok(NULL, ",");
 		}
 	}
 
@@ -357,6 +361,7 @@ void uwsgi_setup_workers() {
 #ifdef UWSGI_ROUTING
 	uwsgi_fixup_routes(uwsgi.routes);
 	uwsgi_fixup_routes(uwsgi.error_routes);
+	uwsgi_fixup_routes(uwsgi.response_routes);
 	uwsgi_fixup_routes(uwsgi.final_routes);
 #endif
 
@@ -448,6 +453,19 @@ void sanitize_args() {
 	if (uwsgi.shared->options[UWSGI_OPTION_MAX_WORKER_LIFETIME] > 0 && uwsgi.shared->options[UWSGI_OPTION_MIN_WORKER_LIFETIME] >= uwsgi.shared->options[UWSGI_OPTION_MAX_WORKER_LIFETIME]) {
 		uwsgi_log("invalid min-worker-lifetime value (%d), must be lower than max-worker-lifetime (%d)\n",
 			uwsgi.shared->options[UWSGI_OPTION_MIN_WORKER_LIFETIME], uwsgi.shared->options[UWSGI_OPTION_MAX_WORKER_LIFETIME]);
+		exit(1);
+	}
+
+	if (uwsgi.cheaper_rss_limit_soft && uwsgi.shared->options[UWSGI_OPTION_MEMORY_DEBUG] != 1 && uwsgi.force_get_memusage != 1) {
+		uwsgi_log("enabling cheaper-rss-limit-soft requires enabling also memory-report\n");
+		exit(1);
+	}
+	if (uwsgi.cheaper_rss_limit_hard && !uwsgi.cheaper_rss_limit_soft) {
+		uwsgi_log("enabling cheaper-rss-limit-hard requires setting also cheaper-rss-limit-soft\n");
+		exit(1);
+	}
+	if ( uwsgi.cheaper_rss_limit_soft && uwsgi.cheaper_rss_limit_hard <= uwsgi.cheaper_rss_limit_soft) {
+		uwsgi_log("cheaper-rss-limit-hard value must be higher than cheaper-rss-limit-soft value\n");
 		exit(1);
 	}
 

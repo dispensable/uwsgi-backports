@@ -187,6 +187,14 @@ int bind_to_unix(char *socket_name, int listen_queue, int chmod_socket, int abst
 		return -1;
 	}
 
+#ifdef __linux__
+        long somaxconn = uwsgi_num_from_file("/proc/sys/net/core/somaxconn", 1);
+        if (somaxconn > 0 && uwsgi.listen_queue > somaxconn) {
+                uwsgi_log("Listen queue size is greater than the system max net.core.somaxconn (%li).\n", somaxconn);
+                uwsgi_nuclear_blast();
+                return -1;
+        }
+#endif
 
 	if (listen(serverfd, listen_queue) != 0) {
 		uwsgi_error("listen()");
@@ -1645,8 +1653,8 @@ void uwsgi_map_sockets() {
 			}
 			if ((int) uwsgi_str_num(usl->value, colon - usl->value) == uwsgi_get_socket_num(uwsgi_sock)) {
 				enabled = 0;
-				char *p = strtok(colon + 1, ",");
-				while (p != NULL) {
+				char *p, *ctx = NULL;
+				uwsgi_foreach_token(colon + 1, ",", p, ctx) {
 					int w = atoi(p);
 					if (w < 1 || w > uwsgi.numproc) {
 						uwsgi_log("invalid worker num: %d\n", w);
@@ -1657,7 +1665,6 @@ void uwsgi_map_sockets() {
 						uwsgi_log("mapped socket %d (%s) to worker %d\n", uwsgi_get_socket_num(uwsgi_sock), uwsgi_sock->name, uwsgi.mywid);
 						break;
 					}
-					p = strtok(NULL, ",");
 				}
 			}
 
@@ -1785,7 +1792,8 @@ void uwsgi_bind_sockets() {
 			int fd = open("/dev/null", O_RDONLY);
 			if (fd < 0) {
 				uwsgi_error_open("/dev/null");
-				exit(1);
+				uwsgi_log("WARNING: unable to remap stdin, /dev/null not available\n");
+				goto stdin_done;
 			}
 			if (fd != 0) {
 				if (dup2(fd, 0) < 0) {
@@ -1802,6 +1810,8 @@ void uwsgi_bind_sockets() {
 		}
 
 	}
+
+stdin_done:
 
 	// check for auto_port socket
 	uwsgi_sock = uwsgi.sockets;
@@ -1953,5 +1963,24 @@ void uwsgi_tcp_nodelay(int fd) {
                 uwsgi_error("uwsgi_tcp_nodelay()/setsockopt()");
         }
 #endif
+}
+
+int uwsgi_accept(int server_fd) {
+	struct sockaddr_un client_src;
+        memset(&client_src, 0, sizeof(struct sockaddr_un));
+        socklen_t client_src_len = 0;
+#if defined(__linux__) && defined(SOCK_NONBLOCK) && !defined(OBSOLETE_LINUX_KERNEL)
+        return accept4(server_fd, (struct sockaddr *) &client_src, &client_src_len, SOCK_NONBLOCK);
+#elif defined(__linux__)
+        int client_fd = accept(server_fd, (struct sockaddr *) &client_src, &client_src_len);
+        if (client_fd >= 0) {
+                uwsgi_socket_nb(client_fd);
+        }
+        return client_fd;
+#else
+ 	return accept(server_fd, (struct sockaddr *) &client_src, &client_src_len);
+#endif
+
+
 }
 

@@ -222,8 +222,8 @@ int uwsgi_get_tcp_info(int fd) {
 #elif defined(__FreeBSD__)
 		if (!uwsgi.shared->ti.__tcpi_sacked) {
 #endif
-                        return 0;
-                }
+			return 0;
+		}
 
 #if defined(__linux__)
 		uwsgi.shared->load = (uint64_t) uwsgi.shared->ti.tcpi_unacked;
@@ -242,12 +242,12 @@ int uwsgi_get_tcp_info(int fd) {
 					uwsgi_error("write()");
 				}
 				else {
-					uwsgi_log("asking emperor for reinforcements (backlog: %llu)...\n", (unsigned long long ) uwsgi.shared->load);
+					uwsgi_log("asking emperor for reinforcements (backlog: %llu)...\n", (unsigned long long) uwsgi.shared->load);
 				}
 			}
 		}
 		if (uwsgi.shared->load >= uwsgi.shared->max_load) {
-			uwsgi_log_verbose("*** uWSGI listen queue of socket %d full !!! (%llu/%llu) ***\n", fd, (unsigned long long ) uwsgi.shared->load, (unsigned long long ) uwsgi.shared->max_load);
+			uwsgi_log_verbose("*** uWSGI listen queue of socket %d full !!! (%llu/%llu) ***\n", fd, (unsigned long long) uwsgi.shared->load, (unsigned long long) uwsgi.shared->max_load);
 			uwsgi.shared->options[UWSGI_OPTION_BACKLOG_ERRORS]++;
 		}
 
@@ -306,7 +306,6 @@ int master_loop(char **argv, char **environ) {
 	struct uwsgi_rb_timer *min_timeout;
 	struct uwsgi_rbtree *rb_timers = uwsgi_init_rb_timer();
 
-
 	if (uwsgi.procname_master) {
 		uwsgi_set_processname(uwsgi.procname_master);
 	}
@@ -345,6 +344,11 @@ int master_loop(char **argv, char **environ) {
 	uwsgi_log("adding %d to signal poll\n", uwsgi.shared->worker_signal_pipe[0]);
 #endif
 	event_queue_add_fd_read(uwsgi.master_queue, uwsgi.shared->worker_signal_pipe[0]);
+
+	if (uwsgi.master_fifo) {
+		uwsgi.master_fifo_fd = uwsgi_master_fifo();
+		event_queue_add_fd_read(uwsgi.master_queue, uwsgi.master_fifo_fd);
+	}
 
 	if (uwsgi.spoolers) {
 		event_queue_add_fd_read(uwsgi.master_queue, uwsgi.shared->spooler_signal_pipe[0]);
@@ -477,7 +481,7 @@ int master_loop(char **argv, char **environ) {
 	uwsgi_check_touches(uwsgi.touch_gracefully_stop);
 	// update exec touches
 	struct uwsgi_string_list *usl = uwsgi.touch_exec;
-	while(usl) {
+	while (usl) {
 		char *space = strchr(usl->value, ' ');
 		if (space) {
 			*space = 0;
@@ -489,16 +493,16 @@ int master_loop(char **argv, char **environ) {
 	uwsgi_check_touches(uwsgi.touch_exec);
 	// update signal touches
 	usl = uwsgi.touch_signal;
-        while(usl) {
-                char *space = strchr(usl->value, ' ');
-                if (space) {
-                        *space = 0;
-                        usl->len = strlen(usl->value);
-                        usl->custom_ptr = space + 1;
-                }
-                usl = usl->next;
-        }
-        uwsgi_check_touches(uwsgi.touch_signal);
+	while (usl) {
+		char *space = strchr(usl->value, ' ');
+		if (space) {
+			*space = 0;
+			usl->len = strlen(usl->value);
+			usl->custom_ptr = space + 1;
+		}
+		usl = usl->next;
+	}
+	uwsgi_check_touches(uwsgi.touch_signal);
 
 	// fsmon
 	uwsgi_fsmon_setup();
@@ -741,7 +745,7 @@ int master_loop(char **argv, char **environ) {
 #endif
 
 			// resubscribe every 10 cycles by default
-			if (( (uwsgi.subscriptions || uwsgi.subscriptions2) && ((uwsgi.master_cycles % uwsgi.subscribe_freq) == 0 || uwsgi.master_cycles == 1)) && !uwsgi_instance_is_reloading && !uwsgi_instance_is_dying && !uwsgi.workers[0].suspended) {
+			if (((uwsgi.subscriptions || uwsgi.subscriptions2) && ((uwsgi.master_cycles % uwsgi.subscribe_freq) == 0 || uwsgi.master_cycles == 1)) && !uwsgi_instance_is_reloading && !uwsgi_instance_is_dying && !uwsgi.workers[0].suspended) {
 				uwsgi_subscribe_all(0, 0);
 			}
 
@@ -765,40 +769,34 @@ int master_loop(char **argv, char **environ) {
 				}
 				touched = uwsgi_check_touches(uwsgi.touch_workers_reload);
 				if (touched) {
-                                        uwsgi_log_verbose("*** %s has been touched... workers reload !!! ***\n", touched);
-					uwsgi_block_signal(SIGHUP);
-					for(i=1;i<=uwsgi.numproc;i++) {
-						if (uwsgi.workers[i].pid > 0) {
-							uwsgi_curse(i, SIGHUP);
-						}
-					}
-					uwsgi_unblock_signal(SIGHUP);
-                                        continue;
-                                }
+					uwsgi_log_verbose("*** %s has been touched... workers reload !!! ***\n", touched);
+					uwsgi_reload_workers();
+					continue;
+				}
 				touched = uwsgi_check_touches(uwsgi.touch_chain_reload);
 				if (touched) {
 					if (uwsgi.status.chain_reloading == 0) {
-                                        	uwsgi_log_verbose("*** %s has been touched... chain reload !!! ***\n", touched);
+						uwsgi_log_verbose("*** %s has been touched... chain reload !!! ***\n", touched);
 						uwsgi.status.chain_reloading = 1;
 					}
 					else {
-                                        	uwsgi_log_verbose("*** %s has been touched... but chain reload is already running ***\n", touched);
+						uwsgi_log_verbose("*** %s has been touched... but chain reload is already running ***\n", touched);
 					}
 				}
 
 				// be sure to run it as the last touch check
 				touched = uwsgi_check_touches(uwsgi.touch_exec);
 				if (touched) {
-					if (uwsgi_run_command( touched , NULL, -1) >= 0) {
+					if (uwsgi_run_command(touched, NULL, -1) >= 0) {
 						uwsgi_log_verbose("[uwsgi-touch-exec] running %s\n", touched);
 					}
 				}
 				touched = uwsgi_check_touches(uwsgi.touch_signal);
-                                if (touched) {
+				if (touched) {
 					uint8_t signum = atoi(touched);
 					uwsgi_route_signal(signum);
-                                        uwsgi_log_verbose("[uwsgi-touch-signal] raising %u\n", signum);
-                                }
+					uwsgi_log_verbose("[uwsgi-touch-signal] raising %u\n", signum);
+				}
 			}
 
 			continue;
@@ -815,12 +813,18 @@ int master_loop(char **argv, char **environ) {
 		// reload gateways and daemons only on normal workflow (+outworld status)
 		if (!uwsgi_instance_is_reloading && !uwsgi_instance_is_dying) {
 
-			if (uwsgi_master_check_emperor_death(diedpid)) continue;
-			if (uwsgi_master_check_spoolers_death(diedpid)) continue;
-			if (uwsgi_master_check_mules_death(diedpid)) continue;
-			if (uwsgi_master_check_gateways_death(diedpid)) continue;
-			if (uwsgi_master_check_daemons_death(diedpid)) continue;
-			if (uwsgi_master_check_cron_death(diedpid)) continue;
+			if (uwsgi_master_check_emperor_death(diedpid))
+				continue;
+			if (uwsgi_master_check_spoolers_death(diedpid))
+				continue;
+			if (uwsgi_master_check_mules_death(diedpid))
+				continue;
+			if (uwsgi_master_check_gateways_death(diedpid))
+				continue;
+			if (uwsgi_master_check_daemons_death(diedpid))
+				continue;
+			if (uwsgi_master_check_cron_death(diedpid))
+				continue;
 		}
 
 
@@ -885,8 +889,9 @@ next:
 		// ok, if we are reloading or dying, just continue the master loop
 		// as soon as all of the workers have pid == 0, the action (exit, or reload) is triggered
 		if (uwsgi_instance_is_reloading || uwsgi_instance_is_dying) {
-			if (!uwsgi.workers[thewid].cursed_at) uwsgi.workers[thewid].cursed_at = uwsgi_now();
-			uwsgi_log("worker %d buried after %d seconds\n", thewid, (int) (uwsgi_now()-uwsgi.workers[thewid].cursed_at));
+			if (!uwsgi.workers[thewid].cursed_at)
+				uwsgi.workers[thewid].cursed_at = uwsgi_now();
+			uwsgi_log("worker %d buried after %d seconds\n", thewid, (int) (uwsgi_now() - uwsgi.workers[thewid].cursed_at));
 			uwsgi.workers[thewid].cursed_at = 0;
 			continue;
 		}
@@ -904,6 +909,11 @@ next:
 		}
 		else if (WIFEXITED(waitpid_status) && WEXITSTATUS(waitpid_status) == UWSGI_QUIET_CODE) {
 			// noop
+		}
+		else if (WIFEXITED(waitpid_status) && WEXITSTATUS(waitpid_status) == UWSGI_BRUTAL_RELOAD_CODE) {
+			uwsgi_log("!!! inconsistent state reported by worker %d (pid: %d) !!!\n", thewid, (int) diedpid);
+			reap_them_all(0);
+			continue;
 		}
 		else if (uwsgi.workers[thewid].manage_next_request) {
 			if (WIFSIGNALED(waitpid_status)) {
@@ -958,4 +968,35 @@ next:
 	}
 
 	// never here
+}
+
+void uwsgi_reload_workers() {
+	int i;
+	uwsgi_block_signal(SIGHUP);
+	for (i = 1; i <= uwsgi.numproc; i++) {
+		if (uwsgi.workers[i].pid > 0) {
+			uwsgi_curse(i, SIGHUP);
+		}
+	}
+	uwsgi_unblock_signal(SIGHUP);
+}
+
+void uwsgi_chain_reload() {
+	if (!uwsgi.status.chain_reloading) {
+		uwsgi_log_verbose("chain reload starting...\n");
+		uwsgi.status.chain_reloading = 1;
+	}
+	else {
+		uwsgi_log_verbose("chain reload already running...\n");
+	}
+}
+
+void uwsgi_brutally_reload_workers() {
+	int i;
+	for (i = 1; i <= uwsgi.numproc; i++) {
+		if (uwsgi.workers[i].pid > 0) {
+			uwsgi_log_verbose("killing worker %d (pid: %d)\n", i, (int) uwsgi.workers[i].pid);
+			uwsgi_curse(i, SIGINT);
+		}
+	}
 }
