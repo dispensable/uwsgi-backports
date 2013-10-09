@@ -1,3 +1,9 @@
+uwsgi (1.9.17.1-1~precise1) precise; urgency=low
+
+  * New upstream release (1.9.17.1) for precise.
+
+ -- Max Arnold <arnold.maxim@gmail.com>  Wed, 09 Oct 2013 11:14:09 +0700
+
 uwsgi (1.9.15-1~precise1) precise; urgency=low
 
   * New upstream release (1.9.15) for precise.
