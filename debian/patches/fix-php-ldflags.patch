@@ -4,11 +4,11 @@ Last-Update: 2012-04-23
 
 --- a/plugins/php/uwsgiplugin.py
 +++ b/plugins/php/uwsgiplugin.py
-@@ -20,6 +20,7 @@ except:
- CFLAGS = [os.popen(PHPPATH + ' --includes').read().rstrip(), '-Wno-sign-compare']
+@@ -14,6 +14,7 @@ PHPPATH = os.environ.get('UWSGICONFIG_PHPPATH', PHPPATH)
  
+ CFLAGS = [os.popen(PHPPATH + ' --includes').read().rstrip(), '-Wno-sign-compare']
  LDFLAGS = os.popen(PHPPATH + ' --ldflags').read().rstrip().split()
 +LDFLAGS.append('-L/usr/lib/php5')
+ 
  if ld_run_path:
      LDFLAGS.append('-L%s' % ld_run_path)
-     os.environ['LD_RUN_PATH'] = ld_run_path
