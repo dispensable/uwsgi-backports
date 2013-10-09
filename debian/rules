@@ -305,9 +305,9 @@ install/uwsgi-core::
 	for SUBDIR in conffile jwsgi psgi rack router wsapi wsgi; do \
 		mkdir -p $(UWSGI_CORE_DOCS_STAGING_DIR)/examples/$${SUBDIR}; \
 	done
-	for FILE in logo_uWSGI.png mongrel2-uwsgi.conf simple_logger.py \
-	            simple_app.py staticfilesnmp.py uwsgistatus.py \
-	            welcome.py; do \
+	for FILE in logo_uWSGI.png mongrel2-uwsgi.conf examples/simple_logger.py \
+		    examples/simple_app.py examples/staticfilesnmp.py \
+		    examples/uwsgistatus.py examples/welcome.py; do \
 		cp $(CURDIR)/$${FILE} $(UWSGI_CORE_DOCS_STAGING_DIR)/examples; \
 	done
 	for FILE in mega.xml multi.ini multi.xml sites.xml uwsgi.xml \
@@ -324,7 +324,7 @@ install/uwsgi-core::
 				examples/uwsgirouter4.py examples/uwsgirouter5.py; do \
 		cp $(CURDIR)/$${FILE} $(UWSGI_CORE_DOCS_STAGING_DIR)/examples/router; \
 	done
-	for FILE in simple_app.py testapp.py testpy3.py; do \
+	for FILE in examples/simple_app.py tests/testapp.py tests/testpy3.py; do \
 		cp $(CURDIR)/$${FILE} $(UWSGI_CORE_DOCS_STAGING_DIR)/examples/wsgi; \
 	done
 	help2man \
