@@ -78,7 +78,7 @@ static struct uwsgi_option uwsgi_pty_options[] = {
 	{"pty-input", no_argument, 0, "read from original stdin in addition to pty", uwsgi_opt_true, &upty.input, 0},
 	{"pty-connect", required_argument, 0, "connect the current terminal to a pty server", uwsgi_opt_set_str, &upty.remote, 0},
 	{"pty-no-isig", no_argument, 0, "disable ISIG terminal attribute in client mode", uwsgi_opt_true, &upty.no_isig, 0},
-	{"pty-exec", no_argument, 0, "run the specified command soon after the pty thread is spawned", uwsgi_opt_set_str, &upty.command, 0},
+	{"pty-exec", required_argument, 0, "run the specified command soon after the pty thread is spawned", uwsgi_opt_set_str, &upty.command, 0},
 	{0, 0, 0, 0, 0, 0, 0},
 };
 
@@ -117,6 +117,14 @@ static void *uwsgi_pty_loop(void *arg) {
 
                 if client is ready we have something to write to the master pty
         */
+
+	// block signals on this thread
+        sigset_t smask;
+        sigfillset(&smask);
+#ifndef UWSGI_DEBUG
+        sigdelset(&smask, SIGSEGV);
+#endif
+        pthread_sigmask(SIG_BLOCK, &smask, NULL);
 
         for(;;) {
                 char buf[8192];
@@ -264,8 +272,8 @@ static int uwsgi_pty_client() {
 		exit(1);
 	}
 
-	uwsgi_socket_nb(upty.server_fd);
-	uwsgi_socket_nb(0);
+	//uwsgi_socket_nb(upty.server_fd);
+	//uwsgi_socket_nb(0);
 
 	uwsgi_log("[pty] connected.\n");
 

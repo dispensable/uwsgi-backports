@@ -173,6 +173,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"master", no_argument, 'M', "enable master process", uwsgi_opt_true, &uwsgi.master_process, 0},
 	{"honour-stdin", no_argument, 0, "do not remap stdin to /dev/null", uwsgi_opt_true, &uwsgi.honour_stdin, 0},
 	{"emperor", required_argument, 0, "run the Emperor", uwsgi_opt_add_string_list, &uwsgi.emperor, 0},
+	{"emperor-wrapper", required_argument, 0, "set a binary wrapper for vassals", uwsgi_opt_set_str, &uwsgi.emperor_wrapper, 0},
 	{"emperor-nofollow", no_argument, 0, "do not follow symlinks when checking for mtime", uwsgi_opt_true, &uwsgi.emperor_nofollow, 0},
 	{"emperor-procname", required_argument, 0, "set the Emperor process name", uwsgi_opt_set_str, &uwsgi.emperor_procname, 0},
 	{"emperor-freq", required_argument, 0, "set the Emperor scan frequency (default 3 seconds)", uwsgi_opt_set_int, &uwsgi.emperor_freq, 0},
@@ -199,7 +200,8 @@ static struct uwsgi_option uwsgi_base_options[] = {
 #endif
 	{"imperial-monitor-list", no_argument, 0, "list enabled imperial monitors", uwsgi_opt_true, &uwsgi.imperial_monitor_list, 0},
 	{"imperial-monitors-list", no_argument, 0, "list enabled imperial monitors", uwsgi_opt_true, &uwsgi.imperial_monitor_list, 0},
-	{"vassals-inherit", required_argument, 0, "add config templates to vassals config", uwsgi_opt_add_string_list, &uwsgi.vassals_templates, 0},
+	{"vassals-inherit", required_argument, 0, "add config templates to vassals config (uses --inherit)", uwsgi_opt_add_string_list, &uwsgi.vassals_templates, 0},
+	{"vassals-include", required_argument, 0, "include config templates to vassals config (uses --include instead of --inherit)", uwsgi_opt_add_string_list, &uwsgi.vassals_includes, 0},
 	{"vassals-start-hook", required_argument, 0, "run the specified command before each vassal starts", uwsgi_opt_set_str, &uwsgi.vassals_start_hook, 0},
 	{"vassals-stop-hook", required_argument, 0, "run the specified command after vassal's death", uwsgi_opt_set_str, &uwsgi.vassals_stop_hook, 0},
 	{"vassal-sos-backlog", required_argument, 0, "ask emperor for sos if backlog queue has more items than the value specified", uwsgi_opt_set_int, &uwsgi.vassal_sos_backlog, 0},
@@ -226,6 +228,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"locks", required_argument, 0, "create the specified number of shared locks", uwsgi_opt_set_int, &uwsgi.locks, 0},
 	{"lock-engine", required_argument, 0, "set the lock engine", uwsgi_opt_set_str, &uwsgi.lock_engine, 0},
 	{"ftok", required_argument, 0, "set the ipcsem key via ftok() for avoiding duplicates", uwsgi_opt_set_str, &uwsgi.ftok, 0},
+	{"persistent-ipcsem", no_argument, 0, "do not remove ipcsem's on shutdown", uwsgi_opt_true, &uwsgi.persistent_ipcsem, 0},
 	{"sharedarea", required_argument, 'A', "create a raw shared memory area of specified pages", uwsgi_opt_set_int, &uwsgi.sharedareasize, 0},
 
 	{"safe-fd", required_argument, 0, "do not close the specified file descriptor", uwsgi_opt_safe_fd, NULL, 0},
@@ -261,7 +264,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"spooler-external", required_argument, 0, "map spoolers requests to a spooler directory managed by an external instance", uwsgi_opt_add_spooler, (void *) UWSGI_SPOOLER_EXTERNAL, UWSGI_OPT_MASTER},
 	{"spooler-ordered", no_argument, 0, "try to order the execution of spooler tasks", uwsgi_opt_true, &uwsgi.spooler_ordered, 0},
 	{"spooler-chdir", required_argument, 0, "chdir() to specified directory before each spooler task", uwsgi_opt_set_str, &uwsgi.spooler_chdir, 0},
-	{"spooler-processes", required_argument, 0, "set the number of processes for spoolers", uwsgi_opt_set_int, &uwsgi.spooler_numproc, 0},
+	{"spooler-processes", required_argument, 0, "set the number of processes for spoolers", uwsgi_opt_set_int, &uwsgi.spooler_numproc, UWSGI_OPT_IMMEDIATE},
 	{"spooler-quiet", no_argument, 0, "do not be verbose with spooler tasks", uwsgi_opt_true, &uwsgi.spooler_quiet, 0},
 	{"spooler-max-tasks", required_argument, 0, "set the maximum number of tasks to run before recycling a spooler", uwsgi_opt_set_int, &uwsgi.spooler_max_tasks, 0},
 	{"spooler-harakiri", required_argument, 0, "set harakiri timeout for spooler tasks", uwsgi_opt_set_dyn, (void *) UWSGI_OPTION_SPOOLER_HARAKIRI, 0},
@@ -288,6 +291,11 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"pidfile", required_argument, 0, "create pidfile (before privileges drop)", uwsgi_opt_set_str, &uwsgi.pidfile, 0},
 	{"pidfile2", required_argument, 0, "create pidfile (after privileges drop)", uwsgi_opt_set_str, &uwsgi.pidfile2, 0},
 	{"chroot", required_argument, 0, "chroot() to the specified directory", uwsgi_opt_set_str, &uwsgi.chroot, 0},
+#ifdef __linux__
+	{"pivot-root", required_argument, 0, "pivot_root() to the specified directories (new_root and put_old must be separated with a space)", uwsgi_opt_set_str, &uwsgi.pivot_root, 0},
+	{"pivot_root", required_argument, 0, "pivot_root() to the specified directories (new_root and put_old must be separated with a space)", uwsgi_opt_set_str, &uwsgi.pivot_root, 0},
+#endif
+
 	{"uid", required_argument, 0, "setuid to the specified user/uid", uwsgi_opt_set_uid, NULL, 0},
 	{"gid", required_argument, 0, "setgid to the specified group/gid", uwsgi_opt_set_gid, NULL, 0},
 	{"add-gid", required_argument, 0, "add the specified group id to the process credentials", uwsgi_opt_add_string_list, &uwsgi.additional_gids, 0},
@@ -300,9 +308,39 @@ static struct uwsgi_option uwsgi_base_options[] = {
 #ifdef __linux__
 	{"unshare", required_argument, 0, "unshare() part of the processes and put it in a new namespace", uwsgi_opt_set_unshare, &uwsgi.unshare, 0},
 #endif
+#ifdef __FreeBSD__
+	{"jail", required_argument, 0, "put the instance in a FreeBSD jail", uwsgi_opt_set_str, &uwsgi.jail, 0},
+	{"jail-ip4", required_argument, 0, "add an ipv4 address to the FreeBSD jail", uwsgi_opt_add_string_list, &uwsgi.jail_ip4, 0},
+	{"jail-ip6", required_argument, 0, "add an ipv6 address to the FreeBSD jail", uwsgi_opt_add_string_list, &uwsgi.jail_ip6, 0},
+	{"jidfile", required_argument, 0, "save the jid of a FreeBSD jail in the specified file", uwsgi_opt_set_str, &uwsgi.jidfile, 0},
+	{"jid-file", required_argument, 0, "save the jid of a FreeBSD jail in the specified file", uwsgi_opt_set_str, &uwsgi.jidfile, 0},
+#ifdef UWSGI_HAS_FREEBSD_LIBJAIL
+	{"jail2", required_argument, 0, "add an option to the FreeBSD jail", uwsgi_opt_add_string_list, &uwsgi.jail2, 0},
+	{"libjail", required_argument, 0, "add an option to the FreeBSD jail", uwsgi_opt_add_string_list, &uwsgi.jail2, 0},
+	{"jail-attach", required_argument, 0, "attach to the FreeBSD jail", uwsgi_opt_set_str, &uwsgi.jail_attach, 0},
+#endif
+#endif
 	{"refork", no_argument, 0, "fork() again after privileges drop. Useful for jailing systems", uwsgi_opt_true, &uwsgi.refork, 0},
 	{"re-fork", no_argument, 0, "fork() again after privileges drop. Useful for jailing systems", uwsgi_opt_true, &uwsgi.refork, 0},
+	{"refork-as-root", no_argument, 0, "fork() again before privileges drop. Useful for jailing systems", uwsgi_opt_true, &uwsgi.refork_as_root, 0},
+	{"re-fork-as-root", no_argument, 0, "fork() again before privileges drop. Useful for jailing systems", uwsgi_opt_true, &uwsgi.refork_as_root, 0},
+	{"refork-post-jail", no_argument, 0, "fork() again after jailing. Useful for jailing systems", uwsgi_opt_true, &uwsgi.refork_post_jail, 0},
+	{"re-fork-post-jail", no_argument, 0, "fork() again after jailing. Useful for jailing systems", uwsgi_opt_true, &uwsgi.refork_post_jail, 0},
 
+	{"hook-asap", required_argument, 0, "run the specified hook as soon as possible", uwsgi_opt_add_string_list, &uwsgi.hook_asap, 0},
+	{"hook-pre-jail", required_argument, 0, "run the specified hook before jailing", uwsgi_opt_add_string_list, &uwsgi.hook_pre_jail, 0},
+        {"hook-post-jail", required_argument, 0, "run the specified hook after jailing", uwsgi_opt_add_string_list, &uwsgi.hook_post_jail, 0},
+        {"hook-in-jail", required_argument, 0, "run the specified hook in jail after initialization", uwsgi_opt_add_string_list, &uwsgi.hook_in_jail, 0},
+        {"hook-as-root", required_argument, 0, "run the specified hook before privileges drop", uwsgi_opt_add_string_list, &uwsgi.hook_as_root, 0},
+        {"hook-as-user", required_argument, 0, "run the specified hook after privileges drop", uwsgi_opt_add_string_list, &uwsgi.hook_as_user, 0},
+        {"hook-as-user-atexit", required_argument, 0, "run the specified hook before app exit and reload", uwsgi_opt_add_string_list, &uwsgi.hook_as_user_atexit, 0},
+        {"hook-pre-app", required_argument, 0, "run the specified hook before app loading", uwsgi_opt_add_string_list, &uwsgi.hook_pre_app, 0},
+        {"hook-post-app", required_argument, 0, "run the specified hook after app loading", uwsgi_opt_add_string_list, &uwsgi.hook_post_app, 0},
+
+        {"hook-as-vassal", required_argument, 0, "run the specified command before exec()ing the vassal", uwsgi_opt_add_string_list, &uwsgi.hook_as_vassal, 0},
+        {"hook-as-emperor", required_argument, 0, "run the specified command in the emperor after the vassal has been started", uwsgi_opt_add_string_list, &uwsgi.hook_as_emperor, 0},
+
+	{"exec-asap", required_argument, 0, "run the specified command as soon as possible", uwsgi_opt_add_string_list, &uwsgi.exec_asap, 0},
 	{"exec-pre-jail", required_argument, 0, "run the specified command before jailing", uwsgi_opt_add_string_list, &uwsgi.exec_pre_jail, 0},
 	{"exec-post-jail", required_argument, 0, "run the specified command after jailing", uwsgi_opt_add_string_list, &uwsgi.exec_post_jail, 0},
 	{"exec-in-jail", required_argument, 0, "run the specified command in jail after initialization", uwsgi_opt_add_string_list, &uwsgi.exec_in_jail, 0},
@@ -314,6 +352,24 @@ static struct uwsgi_option uwsgi_base_options[] = {
 
 	{"exec-as-vassal", required_argument, 0, "run the specified command before exec()ing the vassal", uwsgi_opt_add_string_list, &uwsgi.exec_as_vassal, 0},
 	{"exec-as-emperor", required_argument, 0, "run the specified command in the emperor after the vassal has been started", uwsgi_opt_add_string_list, &uwsgi.exec_as_emperor, 0},
+
+	{"mount-asap", required_argument, 0, "mount filesystem as soon as possible", uwsgi_opt_add_string_list, &uwsgi.mount_asap, 0},
+	{"mount-pre-jail", required_argument, 0, "mount filesystem before jailing", uwsgi_opt_add_string_list, &uwsgi.mount_pre_jail, 0},
+        {"mount-post-jail", required_argument, 0, "mount filesystem after jailing", uwsgi_opt_add_string_list, &uwsgi.mount_post_jail, 0},
+        {"mount-in-jail", required_argument, 0, "mount filesystem in jail after initialization", uwsgi_opt_add_string_list, &uwsgi.mount_in_jail, 0},
+        {"mount-as-root", required_argument, 0, "mount filesystem before privileges drop", uwsgi_opt_add_string_list, &uwsgi.mount_as_root, 0},
+
+        {"mount-as-vassal", required_argument, 0, "mount filesystem before exec()ing the vassal", uwsgi_opt_add_string_list, &uwsgi.mount_as_vassal, 0},
+        {"mount-as-emperor", required_argument, 0, "mount filesystem in the emperor after the vassal has been started", uwsgi_opt_add_string_list, &uwsgi.mount_as_emperor, 0},
+
+	{"umount-asap", required_argument, 0, "unmount filesystem as soon as possible", uwsgi_opt_add_string_list, &uwsgi.umount_asap, 0},
+	{"umount-pre-jail", required_argument, 0, "unmount filesystem before jailing", uwsgi_opt_add_string_list, &uwsgi.umount_pre_jail, 0},
+        {"umount-post-jail", required_argument, 0, "unmount filesystem after jailing", uwsgi_opt_add_string_list, &uwsgi.umount_post_jail, 0},
+        {"umount-in-jail", required_argument, 0, "unmount filesystem in jail after initialization", uwsgi_opt_add_string_list, &uwsgi.umount_in_jail, 0},
+        {"umount-as-root", required_argument, 0, "unmount filesystem before privileges drop", uwsgi_opt_add_string_list, &uwsgi.umount_as_root, 0},
+
+        {"umount-as-vassal", required_argument, 0, "unmount filesystem before exec()ing the vassal", uwsgi_opt_add_string_list, &uwsgi.umount_as_vassal, 0},
+        {"umount-as-emperor", required_argument, 0, "unmount filesystem in the emperor after the vassal has been started", uwsgi_opt_add_string_list, &uwsgi.umount_as_emperor, 0},
 
 	{"wait-for-interface", required_argument, 0, "wait for the specified network interface to come up before running root hooks", uwsgi_opt_add_string_list, &uwsgi.wait_for_interface, 0},
 	{"wait-for-interface-timeout", required_argument, 0, "set the timeout for wait-for-interface", uwsgi_opt_set_int, &uwsgi.wait_for_interface_timeout, 0},
@@ -327,6 +383,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"wait-iface", required_argument, 0, "wait for the specified network interface to come up before running root hooks", uwsgi_opt_add_string_list, &uwsgi.wait_for_interface, 0},
 	{"wait-iface-timeout", required_argument, 0, "set the timeout for wait-for-interface", uwsgi_opt_set_int, &uwsgi.wait_for_interface_timeout, 0},
 
+	{"call-asap", required_argument, 0, "call the specified function as soon as possible", uwsgi_opt_add_string_list, &uwsgi.call_asap, 0},
 	{"call-pre-jail", required_argument, 0, "call the specified function before jailing", uwsgi_opt_add_string_list, &uwsgi.call_pre_jail, 0},
 	{"call-post-jail", required_argument, 0, "call the specified function after jailing", uwsgi_opt_add_string_list, &uwsgi.call_post_jail, 0},
 	{"call-in-jail", required_argument, 0, "call the specified function in jail after initialization", uwsgi_opt_add_string_list, &uwsgi.call_in_jail, 0},
@@ -350,7 +407,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"ini", required_argument, 0, "load config from ini file", uwsgi_opt_load_ini, NULL, UWSGI_OPT_IMMEDIATE},
 #ifdef UWSGI_YAML
 	{"yaml", required_argument, 'y', "load config from yaml file", uwsgi_opt_load_yml, NULL, UWSGI_OPT_IMMEDIATE},
-	{"yal", required_argument, 'y', "load config from yaml file", uwsgi_opt_load_yml, NULL, UWSGI_OPT_IMMEDIATE},
+	{"yml", required_argument, 'y', "load config from yaml file", uwsgi_opt_load_yml, NULL, UWSGI_OPT_IMMEDIATE},
 #endif
 #ifdef UWSGI_JSON
 	{"json", required_argument, 'j', "load config from json file", uwsgi_opt_load_json, NULL, UWSGI_OPT_IMMEDIATE},
@@ -406,7 +463,7 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"fs-brutal-reload", required_argument, 0, "brutal reload when the specified filesystem object is modified", uwsgi_opt_add_string_list, &uwsgi.fs_brutal_reload, UWSGI_OPT_MASTER},
 	{"fs-signal", required_argument, 0, "raise a uwsgi signal when the specified filesystem object is modified (syntax: file signal)", uwsgi_opt_add_string_list, &uwsgi.fs_signal, UWSGI_OPT_MASTER},
 
-	{"propagate-touch", no_argument, 0, "over-engineering option for system with flaky signal mamagement", uwsgi_opt_true, &uwsgi.propagate_touch, 0},
+	{"propagate-touch", no_argument, 0, "over-engineering option for system with flaky signal management", uwsgi_opt_true, &uwsgi.propagate_touch, 0},
 	{"limit-post", required_argument, 0, "limit request body", uwsgi_opt_set_64bit, &uwsgi.limit_post, 0},
 	{"no-orphans", no_argument, 0, "automatically kill workers if master dies (can be dangerous for availability)", uwsgi_opt_true, &uwsgi.no_orphans, 0},
 	{"prio", required_argument, 0, "set processes/threads priority", uwsgi_opt_set_rawint, &uwsgi.prio, 0},
@@ -438,6 +495,8 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"multicast", required_argument, 0, "subscribe to specified multicast group", uwsgi_opt_set_str, &uwsgi.multicast_group, UWSGI_OPT_MASTER},
 	{"multicast-ttl", required_argument, 0, "set multicast ttl", uwsgi_opt_set_int, &uwsgi.multicast_ttl, 0},
 	{"multicast-loop", required_argument, 0, "set multicast loop (default 1)", uwsgi_opt_set_int, &uwsgi.multicast_loop, 0},
+
+	{"master-fifo", required_argument, 0, "enable the master fifo", uwsgi_opt_add_string_list, &uwsgi.master_fifo, UWSGI_OPT_MASTER},
 
 #ifdef UWSGI_SSL
 	{"legion", required_argument, 0, "became a member of a legion", uwsgi_opt_legion, NULL, UWSGI_OPT_MASTER},
@@ -510,6 +569,12 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"logger-list", no_argument, 0, "list enabled loggers", uwsgi_opt_true, &uwsgi.loggers_list, 0},
 	{"loggers-list", no_argument, 0, "list enabled loggers", uwsgi_opt_true, &uwsgi.loggers_list, 0},
 	{"threaded-logger", no_argument, 0, "offload log writing to a thread", uwsgi_opt_true, &uwsgi.threaded_logger, UWSGI_OPT_MASTER | UWSGI_OPT_LOG_MASTER},
+
+
+	{"log-encoder", required_argument, 0, "add an item in the log encoder chain", uwsgi_opt_add_string_list, &uwsgi.requested_log_encoders, UWSGI_OPT_MASTER | UWSGI_OPT_LOG_MASTER},
+	{"log-req-encoder", required_argument, 0, "add an item in the log req encoder chain", uwsgi_opt_add_string_list, &uwsgi.requested_log_req_encoders, UWSGI_OPT_MASTER | UWSGI_OPT_LOG_MASTER},
+	
+
 #ifdef UWSGI_PCRE
 	{"log-drain", required_argument, 0, "drain (do not show) log lines matching the specified regexp", uwsgi_opt_add_regexp_list, &uwsgi.log_drain_rules, UWSGI_OPT_MASTER | UWSGI_OPT_LOG_MASTER},
 	{"log-filter", required_argument, 0, "show only log lines matching the specified regexp", uwsgi_opt_add_regexp_list, &uwsgi.log_filter_rules, UWSGI_OPT_MASTER | UWSGI_OPT_LOG_MASTER},
@@ -538,6 +603,8 @@ static struct uwsgi_option uwsgi_base_options[] = {
 #endif
 	{"log-master", no_argument, 0, "delegate logging to master process", uwsgi_opt_true, &uwsgi.log_master, UWSGI_OPT_MASTER},
 	{"log-master-bufsize", required_argument, 0, "set the buffer size for the master logger. bigger log messages will be truncated", uwsgi_opt_set_64bit, &uwsgi.log_master_bufsize, 0},
+	{"log-master-stream", no_argument, 0, "create the master logpipe as SOCK_STREAM", uwsgi_opt_true, &uwsgi.log_master_stream, 0},
+	{"log-master-req-stream", no_argument, 0, "create the master requests logpipe as SOCK_STREAM", uwsgi_opt_true, &uwsgi.log_master_req_stream, 0},
 	{"log-reopen", no_argument, 0, "reopen log after reload", uwsgi_opt_true, &uwsgi.log_reopen, 0},
 	{"log-truncate", no_argument, 0, "truncate log on startup", uwsgi_opt_true, &uwsgi.log_truncate, 0},
 	{"log-maxsize", required_argument, 0, "set maximum logfile size", uwsgi_opt_set_int, &uwsgi.log_maxsize, UWSGI_OPT_LOG_MASTER},
@@ -556,7 +623,12 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"log-micros", no_argument, 0, "report response time in microseconds instead of milliseconds", uwsgi_opt_true, &uwsgi.log_micros, 0},
 	{"log-x-forwarded-for", no_argument, 0, "use the ip from X-Forwarded-For header instead of REMOTE_ADDR", uwsgi_opt_true, &uwsgi.log_x_forwarded_for, 0},
 	{"master-as-root", no_argument, 0, "leave master process running as root", uwsgi_opt_true, &uwsgi.master_as_root, 0},
+
+	{"drop-after-init", no_argument, 0, "run privileges drop after plugin initialization", uwsgi_opt_true, &uwsgi.drop_after_init, 0},
+	{"drop-after-apps", no_argument, 0, "run privileges drop after apps loading", uwsgi_opt_true, &uwsgi.drop_after_apps, 0},
+
 	{"force-cwd", required_argument, 0, "force the initial working directory to the specified value", uwsgi_opt_set_str, &uwsgi.force_cwd, 0},
+	{"binsh", required_argument, 0, "override /bin/sh (used by exec hooks, it always fallback to /bin/sh)", uwsgi_opt_add_string_list, &uwsgi.binsh, 0},
 	{"chdir", required_argument, 0, "chdir to specified directory before apps loading", uwsgi_opt_set_str, &uwsgi.chdir, 0},
 	{"chdir2", required_argument, 0, "chdir to specified directory after apps loading", uwsgi_opt_set_str, &uwsgi.chdir2, 0},
 	{"lazy", no_argument, 0, "set lazy mode (load apps in workers instead of master)", uwsgi_opt_true, &uwsgi.lazy, 0},
@@ -570,6 +642,8 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"cheaper-algo-list", no_argument, 0, "list enabled cheapers algorithms", uwsgi_opt_true, &uwsgi.cheaper_algo_list, 0},
 	{"cheaper-algos-list", no_argument, 0, "list enabled cheapers algorithms", uwsgi_opt_true, &uwsgi.cheaper_algo_list, 0},
 	{"cheaper-list", no_argument, 0, "list enabled cheapers algorithms", uwsgi_opt_true, &uwsgi.cheaper_algo_list, 0},
+	{"cheaper-rss-limit-soft", required_argument, 0, "don't spawn new workers if total resident memory usage of all workers is higher than this limit", uwsgi_opt_set_64bit, &uwsgi.cheaper_rss_limit_soft, UWSGI_OPT_MASTER | UWSGI_OPT_CHEAPER},
+	{"cheaper-rss-limit-hard", required_argument, 0, "if total workers resident memory usage is higher try to stop workers", uwsgi_opt_set_64bit, &uwsgi.cheaper_rss_limit_hard, UWSGI_OPT_MASTER | UWSGI_OPT_CHEAPER},
 	{"idle", required_argument, 0, "set idle mode (put uWSGI in cheap mode after inactivity)", uwsgi_opt_set_int, &uwsgi.idle, UWSGI_OPT_MASTER},
 	{"die-on-idle", no_argument, 0, "shutdown uWSGI when idle", uwsgi_opt_true, &uwsgi.die_on_idle, 0},
 	{"mount", required_argument, 0, "load application under mountpoint", uwsgi_opt_add_string_list, &uwsgi.mounts, 0},
@@ -627,6 +701,20 @@ static struct uwsgi_option uwsgi_base_options[] = {
         {"error-route-if-not", required_argument, 0, "add an error route based on condition (negate version)", uwsgi_opt_add_route, "if-not", 0},
         {"error-route-run", required_argument, 0, "always run the specified error route action", uwsgi_opt_add_route, "run", 0},
 
+	{"response-route", required_argument, 0, "add a response route", uwsgi_opt_add_route, "path_info", 0},
+        {"response-route-status", required_argument, 0, "add a response route for the specified status", uwsgi_opt_add_route, "status", 0},
+        {"response-route-host", required_argument, 0, "add a response route based on Host header", uwsgi_opt_add_route, "http_host", 0},
+        {"response-route-uri", required_argument, 0, "add a response route based on REQUEST_URI", uwsgi_opt_add_route, "request_uri", 0},
+        {"response-route-qs", required_argument, 0, "add a response route based on QUERY_STRING", uwsgi_opt_add_route, "query_string", 0},
+        {"response-route-remote-addr", required_argument, 0, "add a response route based on REMOTE_ADDR", uwsgi_opt_add_route, "remote_addr", 0},
+        {"response-route-user-agent", required_argument, 0, "add a response route based on HTTP_USER_AGENT", uwsgi_opt_add_route, "user_agent", 0},
+        {"response-route-remote-user", required_argument, 0, "add a response route based on REMOTE_USER", uwsgi_opt_add_route, "remote_user", 0},
+        {"response-route-referer", required_argument, 0, "add a response route based on HTTP_REFERER", uwsgi_opt_add_route, "referer", 0},
+        {"response-route-label", required_argument, 0, "add a response routing label (for use with goto)", uwsgi_opt_add_route, NULL, 0},
+        {"response-route-if", required_argument, 0, "add a response route based on condition", uwsgi_opt_add_route, "if", 0},
+        {"response-route-if-not", required_argument, 0, "add a response route based on condition (negate version)", uwsgi_opt_add_route, "if-not", 0},
+        {"response-route-run", required_argument, 0, "always run the specified response route action", uwsgi_opt_add_route, "run", 0},
+
 	{"router-list", no_argument, 0, "list enabled routers", uwsgi_opt_true, &uwsgi.router_list, 0},
 	{"routers-list", no_argument, 0, "list enabled routers", uwsgi_opt_true, &uwsgi.router_list, 0},
 #endif
@@ -651,6 +739,8 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"add-header", required_argument, 0, "automatically add HTTP headers to response", uwsgi_opt_add_string_list, &uwsgi.additional_headers, 0},
 	{"rem-header", required_argument, 0, "automatically remove specified HTTP header from the response", uwsgi_opt_add_string_list, &uwsgi.remove_headers, 0},
 	{"del-header", required_argument, 0, "automatically remove specified HTTP header from the response", uwsgi_opt_add_string_list, &uwsgi.remove_headers, 0},
+	{"collect-header", required_argument, 0, "store the specified response header in a request var (syntax: header var)", uwsgi_opt_add_string_list, &uwsgi.collect_headers, 0},
+	{"response-header-collect", required_argument, 0, "store the specified response header in a request var (syntax: header var)", uwsgi_opt_add_string_list, &uwsgi.collect_headers, 0},
 
 	{"check-static", required_argument, 0, "check for static files in the specified directory", uwsgi_opt_check_static, NULL, UWSGI_OPT_MIME},
 	{"check-static-docroot", no_argument, 0, "check for static files in the requested DOCUMENT_ROOT", uwsgi_opt_true, &uwsgi.check_static_docroot, UWSGI_OPT_MIME},
@@ -662,8 +752,13 @@ static struct uwsgi_option uwsgi_base_options[] = {
 	{"static-safe", required_argument, 0, "skip security checks if the file is under the specified path", uwsgi_opt_add_string_list, &uwsgi.static_safe, UWSGI_OPT_MIME},
 	{"static-cache-paths", required_argument, 0, "put resolved paths in the uWSGI cache for the specified amount of seconds", uwsgi_opt_set_int, &uwsgi.use_static_cache_paths, UWSGI_OPT_MIME|UWSGI_OPT_MASTER},
 	{"static-cache-paths-name", required_argument, 0, "use the specified cache for static paths", uwsgi_opt_set_str, &uwsgi.static_cache_paths_name, UWSGI_OPT_MIME|UWSGI_OPT_MASTER},
+#ifdef __APPLE__
+	{"mimefile", required_argument, 0, "set mime types file path (default /etc/apache2/mime.types)", uwsgi_opt_add_string_list, &uwsgi.mime_file, UWSGI_OPT_MIME},
+	{"mime-file", required_argument, 0, "set mime types file path (default /etc/apache2/mime.types)", uwsgi_opt_add_string_list, &uwsgi.mime_file, UWSGI_OPT_MIME},
+#else
 	{"mimefile", required_argument, 0, "set mime types file path (default /etc/mime.types)", uwsgi_opt_add_string_list, &uwsgi.mime_file, UWSGI_OPT_MIME},
 	{"mime-file", required_argument, 0, "set mime types file path (default /etc/mime.types)", uwsgi_opt_add_string_list, &uwsgi.mime_file, UWSGI_OPT_MIME},
+#endif
 
 	{"static-expires-type", required_argument, 0, "set the Expires header based on content type", uwsgi_opt_add_dyn_dict, &uwsgi.static_expires_type, UWSGI_OPT_MIME},
 	{"static-expires-type-mtime", required_argument, 0, "set the Expires header based on content type and file mtime", uwsgi_opt_add_dyn_dict, &uwsgi.static_expires_type_mtime, UWSGI_OPT_MIME},
@@ -692,6 +787,8 @@ static struct uwsgi_option uwsgi_base_options[] = {
 
 	{"file-serve-mode", required_argument, 0, "set static file serving mode", uwsgi_opt_fileserve_mode, NULL, UWSGI_OPT_MIME},
 	{"fileserve-mode", required_argument, 0, "set static file serving mode", uwsgi_opt_fileserve_mode, NULL, UWSGI_OPT_MIME},
+
+	{"disable-sendfile", no_argument, 0, "disable sendfile() and rely on boring read()/write()", uwsgi_opt_true, &uwsgi.disable_sendfile, 0},
 
 	{"check-cache", optional_argument, 0, "check for response data in the specified cache (empty for default cache)", uwsgi_opt_set_str, &uwsgi.use_check_cache, 0},
 	{"close-on-exec", no_argument, 0, "set close-on-exec on sockets (could be required for spawning processes in requests)", uwsgi_opt_true, &uwsgi.close_on_exec, 0},
@@ -783,6 +880,7 @@ void show_config(void) {
 }
 
 int uwsgi_manage_custom_option(struct uwsgi_custom_option *uco, char *key, char *value) {
+	int configured;
 	size_t i, count = 1;
 	size_t value_len = 0;
 	if (value)
@@ -808,11 +906,10 @@ int uwsgi_manage_custom_option(struct uwsgi_custom_option *uco, char *key, char 
 	if (value_len > 0) {
 		tmp_val = uwsgi_str(value);
 		// fill the array of options
-		p = strtok(tmp_val, " ");
-		while (p) {
+		char *p, *ctx = NULL;
+		uwsgi_foreach_token(tmp_val, " ", p, ctx) {
 			opt_argv[pos] = p;
 			pos++;
-			p = strtok(NULL, " ");
 		}
 	}
 	else {
@@ -827,8 +924,8 @@ int uwsgi_manage_custom_option(struct uwsgi_custom_option *uco, char *key, char 
 	// now make a copy of the option template
 	char *tmp_opt = uwsgi_str(uco->value);
 	// split it
-	p = strtok(tmp_opt, ";");
-	while (p) {
+	char *ctx = NULL;
+	uwsgi_foreach_token(tmp_opt, ";", p, ctx) {
 		char *equal = strchr(p, '=');
 		if (!equal)
 			goto clear;
@@ -859,9 +956,11 @@ int uwsgi_manage_custom_option(struct uwsgi_custom_option *uco, char *key, char 
 				free(old_value);
 			free(placeholder);
 		}
-		// we can ignore its return value
-		(void) uwsgi_manage_opt(new_key, new_value);
-		p = strtok(NULL, ";");
+retry:
+		configured = uwsgi_manage_opt(new_key, new_value);
+		if (!configured && uwsgi.autoload) {
+			if (uwsgi_try_autoload(new_key)) goto retry;
+		}
 	}
 
 clear:
@@ -972,11 +1071,15 @@ void config_magic_table_fill(char *filename, char **magic_table) {
 
 	int base = '0';
 	char *to_split = uwsgi_str(magic_table['d']);
-	char *p = strtok(to_split, "/");
-	while (p && base <= '9') {
-		magic_table[base] = p;
-		base++;
-		p = strtok(NULL, "/");
+	char *p, *ctx = NULL;
+	uwsgi_foreach_token(to_split, "/", p, ctx) {
+		if (base <= '9') {
+			magic_table[base] = p;
+			base++;
+		}
+		else {
+			break;
+		}
 	}
 
 	if (tmp)
@@ -1128,6 +1231,28 @@ void kill_them_all(int signum) {
 
 	uwsgi_destroy_processes();
 }
+
+// gracefully destroy
+void gracefully_kill_them_all(int signum) {
+
+        if (uwsgi_instance_is_dying) return;
+        uwsgi.status.gracefully_destroying = 1;
+
+        // unsubscribe if needed
+        uwsgi_unsubscribe_all();
+
+        uwsgi_log_verbose("graceful shutdown triggered...\n");
+
+        int i;
+        for (i = 1; i <= uwsgi.numproc; i++) {
+                if (uwsgi.workers[i].pid > 0) {
+                        uwsgi_curse(i, SIGHUP);
+                }
+        }
+
+        uwsgi_destroy_processes();
+}
+
 
 // graceful reload
 void grace_them_all(int signum) {
@@ -1366,6 +1491,8 @@ struct uwsgi_plugin unconfigured_plugin = {
 
 void uwsgi_exec_atexit(void) {
 	if (getpid() == masterpid) {
+	
+		uwsgi_hooks_run(uwsgi.hook_as_user_atexit, "atexit", 0);
 		// now run exit scripts needed by the user
 		struct uwsgi_string_list *usl;
 
@@ -1935,6 +2062,10 @@ int main(int argc, char *argv[], char *envp[]) {
 	uwsgi_register_embedded_routers();
 #endif
 
+	// call here to allows plugin to override hooks
+	uwsgi_register_base_hooks();
+	uwsgi_log_encoders_register_embedded();
+
 	//initialize embedded plugins
 	UWSGI_LOAD_EMBEDDED_PLUGINS
 		// now a bit of magic, if the executable basename contains a 'uwsgi_' string,
@@ -1952,6 +2083,7 @@ int main(int argc, char *argv[], char *envp[]) {
 	uwsgi.magic_table['v'] = uwsgi.cwd;
 	uwsgi.magic_table['h'] = uwsgi.hostname;
 	uwsgi.magic_table['V'] = UWSGI_VERSION;
+	uwsgi.magic_table['['] = "\033";
 
 	// you can embed a ini file in the uWSGi binary with default options
 #ifdef UWSGI_EMBED_CONFIG
@@ -1981,6 +2113,32 @@ int main(int argc, char *argv[], char *envp[]) {
 
 	// ok, the options dictionary is available, lets manage it
 	uwsgi_configure();
+
+	// run "asap" hooks
+	uwsgi_hooks_run(uwsgi.hook_asap, "asap", 1);
+        struct uwsgi_string_list *usl = NULL;
+        uwsgi_foreach(usl, uwsgi.mount_asap) {
+        	uwsgi_log("mounting \"%s\" (asap)...\n", usl->value);
+                if (uwsgi_mount_hook(usl->value)) exit(1);
+	}
+        uwsgi_foreach(usl, uwsgi.umount_asap) {
+        	uwsgi_log("un-mounting \"%s\" (asap)...\n", usl->value);
+                if (uwsgi_umount_hook(usl->value)) exit(1);
+	}
+        uwsgi_foreach(usl, uwsgi.exec_asap) {
+        	uwsgi_log("running \"%s\" (asap)...\n", usl->value);
+                int ret = uwsgi_run_command_and_wait(NULL, usl->value);
+                if (ret != 0) {
+                	uwsgi_log("command \"%s\" exited with non-zero code: %d\n", usl->value, ret);
+                        exit(1);
+                }
+	}
+        uwsgi_foreach(usl, uwsgi.call_asap) {
+        	if (uwsgi_call_symbol(usl->value)) {
+                	uwsgi_log("unable to call function \"%s\"\n", usl->value);
+                        exit(1);
+                }
+	}
 
 	// manage envdirs ASAP
 	uwsgi_envdirs(uwsgi.envdirs);
@@ -2032,6 +2190,7 @@ int main(int argc, char *argv[], char *envp[]) {
 	// setup cheaper algos
 	uwsgi_register_cheaper_algo("spare", uwsgi_cheaper_algo_spare);
 	uwsgi_register_cheaper_algo("backlog", uwsgi_cheaper_algo_backlog);
+	uwsgi_register_cheaper_algo("manual", uwsgi_cheaper_algo_manual);
 
 	// setup imperial monitors
 	uwsgi_register_imperial_monitor("dir", uwsgi_imperial_monitor_directory_init, uwsgi_imperial_monitor_directory);
@@ -2159,6 +2318,8 @@ int main(int argc, char *argv[], char *envp[]) {
 
 #ifdef UWSGI_ROUTING
 	uwsgi_routing_dump();
+#else
+	uwsgi_log("!!! no internal routing support, rebuild with pcre support !!!\n");
 #endif
 
 	// initialize shared sockets
@@ -2169,21 +2330,37 @@ int main(int argc, char *argv[], char *envp[]) {
 		uwsgi_emperor_start();
 	}
 
-	// run the pre-jail scripts
-	struct uwsgi_string_list *usl = uwsgi.exec_pre_jail;
-	while (usl) {
-		uwsgi_log("running \"%s\" (pre-jail)...\n", usl->value);
-		int ret = uwsgi_run_command_and_wait(NULL, usl->value);
-		if (ret != 0) {
-			uwsgi_log("command \"%s\" exited with non-zero code: %d\n", usl->value, ret);
-			exit(1);
-		}
-		usl = usl->next;
-	}
+	if (!uwsgi.reloads) {
+		uwsgi_hooks_run(uwsgi.hook_pre_jail, "pre-jail", 1);
+		struct uwsgi_string_list *usl = NULL;
+		uwsgi_foreach(usl, uwsgi.mount_pre_jail) {
+                                uwsgi_log("mounting \"%s\" (pre-jail)...\n", usl->value);
+                                if (uwsgi_mount_hook(usl->value)) {
+                                        exit(1);
+                                }
+                        }
 
-	uwsgi_foreach(usl, uwsgi.call_pre_jail) {
-		if (uwsgi_call_symbol(usl->value)) {
-			uwsgi_log("unaable to call function \"%s\"\n", usl->value);
+                        uwsgi_foreach(usl, uwsgi.umount_pre_jail) {
+                                uwsgi_log("un-mounting \"%s\" (pre-jail)...\n", usl->value);
+                                if (uwsgi_umount_hook(usl->value)) {
+                                        exit(1);
+                                }
+                        }
+		// run the pre-jail scripts
+		uwsgi_foreach(usl, uwsgi.exec_pre_jail) {
+			uwsgi_log("running \"%s\" (pre-jail)...\n", usl->value);
+			int ret = uwsgi_run_command_and_wait(NULL, usl->value);
+			if (ret != 0) {
+				uwsgi_log("command \"%s\" exited with non-zero code: %d\n", usl->value, ret);
+				exit(1);
+			}
+		}
+
+		uwsgi_foreach(usl, uwsgi.call_pre_jail) {
+			if (uwsgi_call_symbol(usl->value)) {
+				uwsgi_log("unable to call function \"%s\"\n", usl->value);
+				exit(1);
+			}
 		}
 	}
 
@@ -2239,7 +2416,24 @@ int uwsgi_start(void *v_argv) {
 	}
 #endif
 
+	uwsgi_hooks_run(uwsgi.hook_in_jail, "in-jail", 1);
+
 	struct uwsgi_string_list *usl;
+
+	uwsgi_foreach(usl, uwsgi.mount_in_jail) {
+                                uwsgi_log("mounting \"%s\" (in-jail)...\n", usl->value);
+                                if (uwsgi_mount_hook(usl->value)) {
+                                        exit(1);
+                                }
+                        }
+
+                        uwsgi_foreach(usl, uwsgi.umount_in_jail) {
+                                uwsgi_log("un-mounting \"%s\" (in-jail)...\n", usl->value);
+                                if (uwsgi_umount_hook(usl->value)) {
+                                        exit(1);
+                                }
+                        }
+
 	uwsgi_foreach(usl, uwsgi.exec_in_jail) {
                 uwsgi_log("running \"%s\" (in-jail)...\n", usl->value);
                 int ret = uwsgi_run_command_and_wait(NULL, usl->value);
@@ -2251,14 +2445,15 @@ int uwsgi_start(void *v_argv) {
 
         uwsgi_foreach(usl, uwsgi.call_in_jail) {
                 if (uwsgi_call_symbol(usl->value)) {
-                        uwsgi_log("unaable to call function \"%s\"\n", usl->value);
+                        uwsgi_log("unable to call function \"%s\"\n", usl->value);
+			exit(1);
                 }
         }
 
 
 	uwsgi_file_write_do(uwsgi.file_write_list);
 
-	if (!uwsgi.master_as_root && !uwsgi.chown_socket) {
+	if (!uwsgi.master_as_root && !uwsgi.chown_socket && !uwsgi.drop_after_init && !uwsgi.drop_after_apps) {
 		uwsgi_as_root();
 	}
 
@@ -2363,7 +2558,11 @@ int uwsgi_start(void *v_argv) {
 	// build mime.types dictionary
 	if (uwsgi.build_mime_dict) {
 		if (!uwsgi.mime_file)
+#ifdef __APPLE__
+			uwsgi_string_new_list(&uwsgi.mime_file, "/etc/apache2/mime.types");
+#else
 			uwsgi_string_new_list(&uwsgi.mime_file, "/etc/mime.types");
+#endif
 		struct uwsgi_string_list *umd = uwsgi.mime_file;
 		while (umd) {
 			if (!access(umd->value, R_OK)) {
@@ -2406,6 +2605,12 @@ int uwsgi_start(void *v_argv) {
 
 	// setup locking
 	uwsgi_setup_locking();
+	if (uwsgi.use_thunder_lock) {
+		uwsgi_log("thunder lock: enabled\n");
+	}
+	else {
+		uwsgi_log("thunder lock: disabled (you can enable it with --thunder-lock)\n");
+	}
 
 	// allocate rpc structures
         uwsgi_rpc_init();
@@ -2497,6 +2702,11 @@ int uwsgi_start(void *v_argv) {
 			}
 		}
 	}
+
+	if (uwsgi.drop_after_init) {
+		uwsgi_as_root();
+	}
+
 
 	/* gp/plugin initialization */
 	for (i = 0; i < uwsgi.gp_cnt; i++) {
@@ -2735,6 +2945,10 @@ next:
 	//init apps hook (if not lazy)
 	if (!uwsgi.lazy && !uwsgi.lazy_apps) {
 		uwsgi_init_all_apps();
+	}
+
+	if (uwsgi.drop_after_apps) {
+		uwsgi_as_root();
 	}
 
 	// postinit apps (setup specific features after app initialization)
@@ -3067,8 +3281,8 @@ void uwsgi_worker_run() {
 
 	// eventually remap plugins
 	if (uwsgi.remap_modifier) {
-		char *map = strtok(uwsgi.remap_modifier, ",");
-		while (map != NULL) {
+		char *map, *ctx = NULL;
+		uwsgi_foreach_token(uwsgi.remap_modifier, ",", map, ctx) {
 			char *colon = strchr(map, ':');
 			if (colon) {
 				colon[0] = 0;
@@ -3077,7 +3291,6 @@ void uwsgi_worker_run() {
 				uwsgi.p[rm_dst]->request = uwsgi.p[rm_src]->request;
 				uwsgi.p[rm_dst]->after_request = uwsgi.p[rm_src]->after_request;
 			}
-			map = strtok(NULL, ",");
 		}
 	}
 
@@ -3330,6 +3543,8 @@ void uwsgi_init_all_apps() {
 
 	int i, j;
 
+	uwsgi_hooks_run(uwsgi.hook_pre_app, "pre app", 1);
+
 	// now run the pre-app scripts
 	struct uwsgi_string_list *usl = uwsgi.exec_pre_app;
 	while (usl) {
@@ -3345,6 +3560,7 @@ void uwsgi_init_all_apps() {
 	uwsgi_foreach(usl, uwsgi.call_pre_app) {
                 if (uwsgi_call_symbol(usl->value)) {
                         uwsgi_log("unaable to call function \"%s\"\n", usl->value);
+			exit(1);
                 }
         }
 
@@ -3395,6 +3611,8 @@ void uwsgi_init_all_apps() {
 			uwsgi_log("*** no app loaded. going in full dynamic mode ***\n");
 		}
 	}
+
+	uwsgi_hooks_run(uwsgi.hook_post_app, "post app", 1);
 
 	usl = uwsgi.exec_post_app;
         while (usl) {
@@ -3846,8 +4064,8 @@ void uwsgi_opt_load_dl(char *opt, char *value, void *none) {
 void uwsgi_opt_load_plugin(char *opt, char *value, void *none) {
 
 	char *plugins_list = uwsgi_concat2(value, "");
-	char *p = strtok(plugins_list, ",");
-	while (p != NULL) {
+	char *p, *ctx = NULL;
+	uwsgi_foreach_token(plugins_list, ",", p, ctx) {
 #ifdef UWSGI_DEBUG
 		uwsgi_debug("loading plugin %s\n", p);
 #endif
@@ -3858,7 +4076,6 @@ void uwsgi_opt_load_plugin(char *opt, char *value, void *none) {
 			uwsgi_log("unable to load plugin \"%s\"\n", p);
 			exit(1);
 		}
-		p = strtok(NULL, ",");
 	}
 	free(p);
 	free(plugins_list);
@@ -4346,4 +4563,13 @@ void uwsgi_print_sym(char *opt, char *symbol, void *foobar) {
 	}
 
 	exit(0);
+}
+
+void uwsgi_update_pidfiles() {
+	if (uwsgi.pidfile) {
+		uwsgi_write_pidfile(uwsgi.pidfile);
+	}
+	if (uwsgi.pidfile2) {
+		uwsgi_write_pidfile(uwsgi.pidfile2);
+	}
 }
