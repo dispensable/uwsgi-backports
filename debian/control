@@ -6,7 +6,6 @@ Build-Depends:
  cdbs,
  debhelper (>= 8),
  apache2-threaded-dev,
- erlang-dev,
  help2man,
  javahelper,
  libapr1-dev,
@@ -233,8 +232,6 @@ Depends: ${misc:Depends},
  uwsgi-plugin-fiber (= ${binary:Version}),
  uwsgi-plugin-greenlet-python (= ${binary:Version})
    [amd64 i386 mips powerpc s390],
- uwsgi-plugin-pyerl-python (= ${binary:Version}),
- uwsgi-plugin-pyerl-python3 (= ${binary:Version})
 Description: all available plugins for uWSGI
  uWSGI presents a complete stack for networked/clustered web applications,
  implementing message/object passing, caching, RPC and process management.
@@ -246,7 +243,7 @@ Description: all available plugins for uWSGI
    * infrastructure plugins (HTTP serving, RPC, etc.)
    * plugins for integration of uWSGI and application (PSGI, Rack, WSGI,
      etc.)
-   * fiber loop engine, greenlet (Python), pyerl (Python/Python 3)
+   * fiber loop engine, greenlet (Python)
 
 Package: uwsgi-infrastructure-plugins
 Architecture: any
@@ -283,7 +280,6 @@ Description: infrastructure plugins for uWSGI
 Package: uwsgi-app-integration-plugins
 Architecture: any
 Depends: ${misc:Depends},
- uwsgi-plugin-erlang (= ${binary:Version}),
  uwsgi-plugin-jvm-openjdk-6 (= ${binary:Version}),
  uwsgi-plugin-jvm-openjdk-7 (= ${binary:Version}),
  uwsgi-plugin-jwsgi-openjdk-6 (= ${binary:Version}),
@@ -304,7 +300,6 @@ Description: plugins for integration of uWSGI and application
  .
  This dependency package provides plugins for integration of uWSGI and
  application:
-   * Erlang
    * Java (OpenJDK 6 and 7)
    * JWSGI (OpenJDK 6 and 7)
    * Lua WSAPI (Lua 5.1)
@@ -360,18 +355,6 @@ Description: Emperor PostgreSQL plugin for uWSGI
  the same core.
  .
  This package provides emperor_pg plugin for uWSGI.
-
-Package: uwsgi-plugin-erlang
-Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, uwsgi-core (= ${binary:Version})
-Description: Erlang plugin for uWSGI
- uWSGI presents a complete stack for networked/clustered web applications,
- implementing message/object passing, caching, RPC and process management.
- It is designed to be fully modular. This means that different plugins can be
- used in order to add compatibility with tons of different technology on top of
- the same core.
- .
- This package provides Erlang plugin for uWSGI.
 
 Package: uwsgi-plugin-fiber
 Architecture: any
@@ -517,34 +500,6 @@ Description: Perl PSGI plugin for uWSGI
  the same core.
  .
  This package provides Perl PSGI plugin for uWSGI.
-
-Package: uwsgi-plugin-pyerl-python
-Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends},
- uwsgi-plugin-python (= ${binary:Version}),
- uwsgi-plugin-erlang (= ${binary:Version})
-Description: pyerl plugin for uWSGI (Python)
- uWSGI presents a complete stack for networked/clustered web applications,
- implementing message/object passing, caching, RPC and process management.
- It is designed to be fully modular. This means that different plugins can be
- used in order to add compatibility with tons of different technology on top of
- the same core.
- .
- This package provides pyerl plugin for uWSGI with Python WSGI plugin.
-
-Package: uwsgi-plugin-pyerl-python3
-Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends},
- uwsgi-plugin-python3 (= ${binary:Version}),
- uwsgi-plugin-erlang (= ${binary:Version})
-Description: pyerl plugin for uWSGI (Python 3)
- uWSGI presents a complete stack for networked/clustered web applications,
- implementing message/object passing, caching, RPC and process management.
- It is designed to be fully modular. This means that different plugins can be
- used in order to add compatibility with tons of different technology on top of
- the same core.
- .
- This package provides pyerl plugin for uWSGI with Python 3 WSGI plugin.
 
 Package: uwsgi-plugin-python
 Architecture: any

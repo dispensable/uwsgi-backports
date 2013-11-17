@@ -75,7 +75,6 @@ PARTICULARLY_BUILT_UWSGI_PLUGIN_PKGS = \
 	jvm-openjdk-6 jwsgi-openjdk-6 \
 	lua5.1 \
 	jvm-openjdk-7 jwsgi-openjdk-7 \
-	$(patsubst %,pyerl-%,$(UWSGI_PLUGIN_PYTHON_PKG_KINDS)) \
 	rack-ruby1.8 rack-ruby1.9.1 fiber
 
 ORDINARILY_BUILT_UWSGI_PLUGIN_PKGS := $(filter-out \
@@ -152,7 +151,6 @@ clean::
 	for PYVER in $(PYTHON_VERS) $(PYTHON3_VERS); do \
 		$(RM) \
 			$(CURDIR)/greenlet_python$${PYVER}_plugin.so \
-			$(CURDIR)/pyerl_python$${PYVER}_plugin.so \
 			$(CURDIR)/python$${PYVER}_plugin.so; \
 	done
 	# compiled Apache2 modules
@@ -187,7 +185,6 @@ clean::
 			uwsgi-plugin-, $(UWSGI_PLUGIN_PYTHON_PKG_KINDS), .$${TEMPLATE_TYPE} \
 		); \
 		$(RM) $(call files_instantiated_in_debian_dir, \
-			uwsgi-plugin-pyerl-, \
 			$(UWSGI_PLUGIN_PYTHON_PKG_KINDS), .$${TEMPLATE_TYPE} \
 		); \
 	done
@@ -393,21 +390,6 @@ debian/stamp-plugin-jvm-openjdk-7 debian/stamp-plugin-jwsgi-openjdk-7:
 		         $(PLUGIN_NAME)
 	touch $@
 
-# Build pyerl_python2x_plugin.so/pyerl_python3x_plugin.so
-$(patsubst %,debian/stamp-plugin-pyerl-%,$(UWSGI_PLUGIN_PYTHON_PKG_KINDS)):
-	$(eval PYTHON_KIND = $(call target_name_tail, $@))
-	$(eval PYVERS = $($(subst python,PYTHON,$(PYTHON_KIND))_VERS_DOTTED))
-	for PYTHON_VERSION in $(PYVERS); do \
-		$(PYTHON)$${PYTHON_VERSION} $(UWSGI_BUILDER) \
-			--plugin $(CURDIR)/$(UWSGI_PLUGINS_SRC_DIR)/pyerl \
-			         $(CURDIR)/debian/buildconf/uwsgi-plugin.ini \
-			         pyerl_python$$(echo $${PYTHON_VERSION} | tr -d .); \
-	done
-	sed -e 's/@@python_kind@@/$(PYTHON_KIND)/g' \
-			< $(CURDIR)/debian/uwsgi-plugin-pyerl.dirs.in \
-			> $(CURDIR)/debian/uwsgi-plugin-pyerl-$(PYTHON_KIND).dirs
-	touch $@
-
 # Build python2x_plugin.so/python3x_plugin.so
 $(patsubst %,debian/stamp-plugin-%,$(UWSGI_PLUGIN_PYTHON_PKG_KINDS)):
 	$(eval PYTHON_KIND = $(call target_name_tail, $@))
@@ -505,25 +487,6 @@ install/uwsgi-plugin-jvm-openjdk-6 install/uwsgi-plugin-jvm-openjdk-7::
 		--no-info \
 		$(CURDIR)/uwsgi_$(PLUGIN_NAME) \
 		> $(CURDIR)/debian/uwsgi_$(PLUGIN_NAME).1; \
-
-# Install uwsgi-plugin-pyerl-python/uwsgi-plugin-pyerl-python3 packages
-$(patsubst %,install/uwsgi-plugin-pyerl-%,$(UWSGI_PLUGIN_PYTHON_PKG_KINDS))::
-	$(eval PYTHON_KIND = $(call target_name_tail, $@))
-	$(eval PYVERS = $($(subst python,PYTHON,$(PYTHON_KIND))_VERS))
-	$(eval PYDEFAULT = $($(subst python,PYTHON,$(PYTHON_KIND))_DEFAULT))
-	for TEMPLATE_TYPE in postinst prerm; do \
-		sed \
-			-e 's/@@available_python_versions_dotless@@/$(PYVERS)/g' \
-			-e 's/@@default_python_version_dotless@@/$(PYDEFAULT)/g' \
-			-e 's/@@python_kind@@/$(PYTHON_KIND)/g' \
-				< $(CURDIR)/debian/uwsgi-plugin-pyerl.$${TEMPLATE_TYPE}.in \
-				> $(CURDIR)/debian/$(cdbs_curpkg).$${TEMPLATE_TYPE}; \
-	done
-	for PYTHON_VERSION in $(PYVERS); do \
-		sed -e "s/@@plugin_name@@/pyerl_python$${PYTHON_VERSION}/g" \
-			< $(CURDIR)/debian/uwsgi-plugin.install.in \
-			>> $(CURDIR)/debian/$(cdbs_curpkg).install; \
-	done
 
 # Install uwsgi-plugin-python/uwsgi-plugin-python3 packages
 $(patsubst %,install/uwsgi-plugin-%,$(UWSGI_PLUGIN_PYTHON_PKG_KINDS))::
@@ -633,20 +596,6 @@ install/uwsgi-plugin-rack-ruby1.8 install/uwsgi-plugin-rack-ruby1.9.1::
 		--no-info \
 		$(CURDIR)/uwsgi_$(PLUGIN_NAME) \
 		> $(CURDIR)/debian/uwsgi_$(PLUGIN_NAME).1
-
-# Binary-post-install uwsgi-plugin-pyerl-% packages
-$(patsubst %,binary-post-install/uwsgi-plugin-pyerl-%,$(UWSGI_PLUGIN_PYTHON_PKG_KINDS))::
-	$(eval PYTHON_KIND = $(call target_name_tail, $@))
-	$(eval PYVERS = $($(subst python,PYTHON,$(PYTHON_KIND))_VERS))
-	$(eval PYTHON_RTUPDATE_SCRIPT = \
-		$(CURDIR)/debian/$(cdbs_curpkg)/usr/share/$(PYTHON_KIND)/runtime.d/uwsgi-plugin-pyerl-$(PYTHON_KIND).rtupdate \
-	)
-	sed \
-		-e 's/@@available_python_versions_dotless@@/$(PYVERS)/g' \
-		-e 's/@@python_kind@@/$(PYTHON_KIND)/g' \
-			< $(CURDIR)/debian/uwsgi-plugin-pyerl.rtupdate.in \
-			> $(PYTHON_RTUPDATE_SCRIPT)
-	chmod 755 $(PYTHON_RTUPDATE_SCRIPT)
 
 # Binary-post-install uwsgi-plugin-python/uwsgi-plugin-python3 packages
 $(patsubst %,binary-post-install/uwsgi-plugin-%,$(UWSGI_PLUGIN_PYTHON_PKG_KINDS))::
