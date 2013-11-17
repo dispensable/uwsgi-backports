@@ -1,0 +1,20 @@
+Description: Remove value assignments to environment variable LD_RUN_PATH
+ Value assignment to environment variable LD_RUN_PATH leads to setted RPATH in
+ compiled binary/shared library.
+ .
+ And then Lintian reports about error (E: binary-or-shlib-defines-rpath).
+Author: Leonid Borisenko <leo.borisenko@gmail.com>
+Forwarded: not-needed
+Last-Update: 2013-08-31
+
+diff -urN uwsgi-1.9.15.orig/plugins/rack/uwsgiplugin.py uwsgi-1.9.15/plugins/rack/uwsgiplugin.py
+--- uwsgi-1.9.15.orig/plugins/rack/uwsgiplugin.py	2013-08-29 01:49:21.000000000 -0700
++++ uwsgi-1.9.15/plugins/rack/uwsgiplugin.py	2013-08-31 17:21:40.606735300 -0700
+@@ -44,7 +44,6 @@
+ 
+ if has_shared == 'yes':
+     LDFLAGS.append('-L' + libpath )
+-    os.environ['LD_RUN_PATH'] = libpath
+     LIBS.append(os.popen(RUBYPATH + " -e \"require 'rbconfig';print '-l' + %s::CONFIG['RUBY_SO_NAME']\"" % rbconfig).read().rstrip())
+ else:
+     rubylibdir = os.popen(RUBYPATH + " -e \"require 'rbconfig';print RbConfig::CONFIG['rubylibdir']\"").read().rstrip()
