@@ -260,7 +260,6 @@ static void uwsgi_perl_free_stashes(void) {
 
 int init_psgi_app(struct wsgi_request *wsgi_req, char *app, uint16_t app_len, PerlInterpreter **interpreters) {
 
-	struct stat st;
 	int i;
 	SV **callables;
 
@@ -268,30 +267,13 @@ int init_psgi_app(struct wsgi_request *wsgi_req, char *app, uint16_t app_len, Pe
 
 	char *app_name = uwsgi_concat2n(app, app_len, "", 0);
 
-	// prepare for $0
-	uperl.embedding[1] = app_name;
-		
-	int fd = open(app_name, O_RDONLY);
-	if (fd < 0) {
-		uwsgi_error_open(app_name);
-		goto clear2;
-	}
+	size_t size;
+	char *buf = uwsgi_open_and_read(app_name, &size, 1, NULL);
 
-	if (fstat(fd, &st)) {
-		uwsgi_error("fstat()");
-		close(fd);
-		goto clear2;
+	if (uwsgi_file_exists(app_name)) {
+		// prepare for $0 (if the file is local)
+		uperl.embedding[1] = app_name;
 	}
-
-	char *buf = uwsgi_calloc(st.st_size+1);
-	if (read(fd, buf, st.st_size) != st.st_size) {
-		uwsgi_error("read()");
-		close(fd);
-		free(buf);
-		goto clear2;
-	}
-
-	close(fd);
 
 	// the first (default) app, should always be loaded in the main interpreter
 	if (interpreters == NULL) {
@@ -309,10 +291,7 @@ int init_psgi_app(struct wsgi_request *wsgi_req, char *app, uint16_t app_len, Pe
 		}		
 	}
 
-	if (!interpreters) {
-		goto clear2;
-	}
-
+	if (!interpreters) goto clear2;
 
 	callables = uwsgi_calloc(sizeof(SV *) * uwsgi.threads);
 	uperl.tmp_streaming_stash = uwsgi_calloc(sizeof(HV *) * uwsgi.threads);
@@ -370,6 +349,7 @@ int init_psgi_app(struct wsgi_request *wsgi_req, char *app, uint16_t app_len, Pe
 
 		perl_eval_pv("use IO::Handle;", 0);
 		perl_eval_pv("use IO::File;", 0);
+		perl_eval_pv("use IO::Socket;", 0);
 		perl_eval_pv("use Scalar::Util;", 0);
 		if (!uperl.no_die_catch) {
 			perl_eval_pv("use Devel::StackTrace;", 0);
@@ -483,7 +463,7 @@ void uwsgi_psgi_app() {
 		init_psgi_app(NULL, uperl.psgi, strlen(uperl.psgi), uperl.main);
         }
 	// create a perl environment (if needed)
-	else if (uperl.exec) {
+	else if (uperl.exec || uperl.shell) {
 		PERL_SET_CONTEXT(uperl.main[0]);
                 perl_parse(uperl.main[0], xs_init, 2, uperl.embedding, NULL);
 	}

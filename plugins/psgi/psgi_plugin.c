@@ -11,9 +11,25 @@ struct uwsgi_perl uperl;
 
 struct uwsgi_plugin psgi_plugin;
 
+static void uwsgi_opt_plshell(char *opt, char *value, void *foobar) {
+
+        uwsgi.honour_stdin = 1;
+        if (value) {
+                uperl.shell = value;
+        }
+        else {
+                uperl.shell = "";
+        }
+
+        if (!strcmp("plshell-oneshot", opt)) {
+                uperl.shell_oneshot = 1;
+        }
+}
+
 struct uwsgi_option uwsgi_perl_options[] = {
 
         {"psgi", required_argument, 0, "load a psgi app", uwsgi_opt_set_str, &uperl.psgi, 0},
+        {"psgi-enable-psgix-io", no_argument, 0, "enable psgix.io support", uwsgi_opt_true, &uperl.enable_psgix_io, 0},
         {"perl-no-die-catch", no_argument, 0, "do not catch $SIG{__DIE__}", uwsgi_opt_true, &uperl.no_die_catch, 0},
         {"perl-local-lib", required_argument, 0, "set perl locallib path", uwsgi_opt_set_str, &uperl.locallib, 0},
 #ifdef PERL_VERSION_STRING
@@ -23,9 +39,62 @@ struct uwsgi_option uwsgi_perl_options[] = {
         {"perl-arg", required_argument, 0, "add an item to @ARGV", uwsgi_opt_add_string_list, &uperl.argv_item, 0},
         {"perl-exec", required_argument, 0, "exec the specified perl file before fork()", uwsgi_opt_add_string_list, &uperl.exec, 0},
         {"perl-exec-post-fork", required_argument, 0, "exec the specified perl file after fork()", uwsgi_opt_add_string_list, &uperl.exec_post_fork, 0},
+        {"perl-auto-reload", required_argument, 0, "enable perl auto-reloader with the specified frequency", uwsgi_opt_set_int, &uperl.auto_reload, UWSGI_OPT_MASTER},
+        {"perl-auto-reload-ignore", required_argument, 0, "ignore the specified files when auto-reload is enabled", uwsgi_opt_add_string_list, &uperl.auto_reload_ignore, UWSGI_OPT_MASTER},
+
+	{"plshell", optional_argument, 0, "run a perl interactive shell", uwsgi_opt_plshell, NULL, 0},
+        {"plshell-oneshot", no_argument, 0, "run a perl interactive shell (one shot)", uwsgi_opt_plshell, NULL, 0},
         {0, 0, 0, 0, 0, 0, 0},
 
 };
+
+int uwsgi_perl_check_mtime(time_t now, HV *list, SV *key) {
+	// insert item with the current time
+	if (!hv_exists_ent(list, key, 0)) {
+		// useless if...
+		if (hv_store_ent(list, key, newSViv(now), 0)) return 0;
+	}
+	else {
+		// compare mtime
+		struct stat st;
+		if (stat(SvPV_nolen(key), &st)) return 0;
+		HE *mtime = hv_fetch_ent(list, key, 0, 0);
+		if (!mtime) return 0;
+		if (st.st_mtime > SvIV(HeVAL(mtime))) {
+			uwsgi_log_verbose("[perl-auto-reloader] %s has been modified !!!\n", SvPV_nolen(key));
+			kill(uwsgi.workers[0].pid, SIGHUP);
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+void uwsgi_perl_check_auto_reload() {
+	time_t now = uwsgi_now();
+	HE *he;
+	if (!uperl.auto_reload_hash) {
+		uperl.auto_reload_hash = newHV();
+		// useless return value
+		if (!SvREFCNT_inc(uperl.auto_reload_hash)) return;
+	}
+	GV *gv_inc = gv_fetchpv("INC", TRUE, SVt_PV);
+	if (!gv_inc) return;
+	HV *inc = GvHV(gv_inc);
+	hv_iterinit(inc);
+	while((he = hv_iternext(inc))) {
+		SV *filename = hv_iterval(inc, he);
+		struct uwsgi_string_list *usl;
+		int found = 0;
+		uwsgi_foreach(usl, uperl.auto_reload_ignore) {
+			if (!strcmp(usl->value, SvPV_nolen(filename))) {
+				found = 1; break;
+			}
+		}	
+		if (found) continue;
+		if (uwsgi_perl_check_mtime(now, uperl.auto_reload_hash, filename)) return;
+	}
+}
 
 SV *uwsgi_perl_obj_new(char *class, size_t class_len) {
 
@@ -50,6 +119,31 @@ SV *uwsgi_perl_obj_new(char *class, size_t class_len) {
 
 	return newobj;
 	
+}
+
+SV *uwsgi_perl_obj_new_from_fd(char *class, size_t class_len, int fd) {
+	SV *newobj;
+
+        dSP;
+
+        ENTER;
+        SAVETMPS;
+        PUSHMARK(SP);
+	XPUSHs(sv_2mortal(newSVpv( class, class_len)));
+        XPUSHs(sv_2mortal(newSViv( fd )));
+        XPUSHs(sv_2mortal(newSVpv( "w", 1 )));
+        PUTBACK;
+
+        call_method( "new_from_fd", G_SCALAR);
+
+        SPAGAIN;
+
+        newobj = SvREFCNT_inc(POPs);
+        PUTBACK;
+        FREETMPS;
+        LEAVE;
+
+        return newobj;
 }
 
 SV *uwsgi_perl_call_stream(SV *func) {
@@ -195,7 +289,10 @@ AV *psgi_call(struct wsgi_request *wsgi_req, SV *psgi_func, SV *env) {
                 uwsgi_log("[uwsgi-perl error] %s", SvPV_nolen(ERRSV));
         }
 	else {
-		ret = (AV *) SvREFCNT_inc(SvRV(POPs));
+		SV *r = POPs;
+		if (SvROK(r)) {
+			ret = (AV *) SvREFCNT_inc(SvRV(r));
+		}
 	}
 
 	PUTBACK;
@@ -310,7 +407,12 @@ SV *build_psgi_env(struct wsgi_request *wsgi_req) {
 	// cleanup handlers array
 	av = newAV();
 	if (!hv_store(env, "psgix.cleanup.handlers", 22, newRV_noinc((SV *)av ), 0)) goto clear;
-	
+
+	// this call requires a bunch of syscalls, so it hurts performance
+	if (uperl.enable_psgix_io) {
+		SV *io = uwsgi_perl_obj_new_from_fd("IO::Socket", 10, wsgi_req->fd);
+		if (!hv_store(env, "psgix.io", 8, io, 0)) goto clear;
+	}
 
 	SV *pe = uwsgi_perl_obj_new("uwsgi::error", 12);
         if (!hv_store(env, "psgi.errors", 11, pe, 0)) goto clear;
@@ -563,6 +665,14 @@ void uwsgi_perl_after_request(struct wsgi_request *wsgi_req) {
 	// clear the env
 	SvREFCNT_dec(wsgi_req->async_environ);
 
+	// now we can check for changed files
+        if (uperl.auto_reload) {
+                time_t now = uwsgi_now();
+                if (now - uperl.last_auto_reload > uperl.auto_reload) {
+                        uwsgi_perl_check_auto_reload();
+                }
+        }
+
 }
 
 int uwsgi_perl_magic(char *mountpoint, char *lazy) {
@@ -706,10 +816,10 @@ realstuff:
 	}
 }
 
-static uint16_t uwsgi_perl_rpc(void *func, uint8_t argc, char **argv, uint16_t argvs[], char *buffer) {
+static uint64_t uwsgi_perl_rpc(void *func, uint8_t argc, char **argv, uint16_t argvs[], char **buffer) {
 
 	int i;
-	uint16_t ret = 0;
+	uint64_t ret = 0;
 
         dSP;
         ENTER;
@@ -730,8 +840,11 @@ static uint16_t uwsgi_perl_rpc(void *func, uint8_t argc, char **argv, uint16_t a
 		STRLEN rlen;
 		SV *response = POPs;
                 char *value = SvPV(response, rlen );
-		ret = UMIN(UMAX16-1, rlen);
-		memcpy(buffer, value, ret);
+		if (rlen > 0) {
+			*buffer = uwsgi_malloc(rlen);
+			memcpy(*buffer, value, rlen);
+			ret = rlen;
+		}	
 	}
 
         PUTBACK;
@@ -740,6 +853,39 @@ static uint16_t uwsgi_perl_rpc(void *func, uint8_t argc, char **argv, uint16_t a
 
         return ret;
 }
+
+static void uwsgi_perl_hijack(void) {
+        if (uperl.shell_oneshot && uwsgi.workers[uwsgi.mywid].hijacked_count > 0) {
+                uwsgi.workers[uwsgi.mywid].hijacked = 0;
+                return;
+        }
+        if (uperl.shell && uwsgi.mywid == 1) {
+                uwsgi.workers[uwsgi.mywid].hijacked = 1;
+                uwsgi.workers[uwsgi.mywid].hijacked_count++;
+                // re-map stdin to stdout and stderr if we are logging to a file
+                if (uwsgi.logfile) {
+                        if (dup2(0, 1) < 0) {
+                                uwsgi_error("dup2()");
+                        }
+                        if (dup2(0, 2) < 0) {
+                                uwsgi_error("dup2()");
+                        }
+                }
+
+                if (uperl.shell[0] != 0) {
+			perl_eval_pv(uperl.shell, 0);
+                }
+                else {
+			perl_eval_pv("use Devel::REPL;my $repl = Devel::REPL->new;$repl->run;", 0);
+                }
+                if (uperl.shell_oneshot) {
+                        exit(UWSGI_DE_HIJACKED_CODE);
+                }
+                exit(0);
+        }
+
+}
+
 
 struct uwsgi_plugin psgi_plugin = {
 
@@ -756,6 +902,8 @@ struct uwsgi_plugin psgi_plugin = {
 	.rpc = uwsgi_perl_rpc,
 
 	.mule = uwsgi_perl_mule,
+
+	.hijack_worker = uwsgi_perl_hijack,
 
 	.post_fork = uwsgi_perl_post_fork,
 	.request = uwsgi_perl_request,

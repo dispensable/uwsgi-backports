@@ -7,7 +7,7 @@ extern struct uwsgi_server uwsgi;
 
 /* how the cache bitmap works:
 
-	a bitmap is a shared mempry area allocated when requested by the user with --cache2
+	a bitmap is a shared memory area allocated when requested by the user with --cache2
 
 	Each block maps to a bit in the bitmap. If the corresponding bit is cleared
 	the block is usable otherwise the block scanner will search for the next one.
@@ -325,7 +325,7 @@ void uwsgi_cache_init(struct uwsgi_cache *uc) {
 			exit(1);
 		}
 		uc->items = (struct uwsgi_cache_item *) mmap(NULL, uc->filesize, PROT_READ | PROT_WRITE, MAP_SHARED, cache_fd, 0);
-		if (!uc->items) {
+		if (uc->items == MAP_FAILED) {
 			uwsgi_error("uwsgi_cache_init()/mmap() [with store]");
 			exit(1);
 		}
@@ -335,7 +335,7 @@ void uwsgi_cache_init(struct uwsgi_cache *uc) {
 	}
 	else {
 		uc->items = (struct uwsgi_cache_item *) mmap(NULL, uc->filesize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANON, -1, 0);
-		if (!uc->items) {
+		if (uc->items == MAP_FAILED) {
 			uwsgi_error("uwsgi_cache_init()/mmap()");
 			exit(1);
 		}
@@ -762,7 +762,7 @@ int uwsgi_cache_set2(struct uwsgi_cache *uc, char *key, uint16_t keylen, char *v
                         }
                         // mark used blocks;
                         uint64_t needed_blocks = cache_mark_blocks(uc, uci->first_block, vallen);
-                        // optimize teh scan
+                        // optimize the scan
                         if (uc->blocks_bitmap_pos + (needed_blocks+1) > uc->blocks) {
                                 uc->blocks_bitmap_pos = 0;
                         }
@@ -773,7 +773,7 @@ int uwsgi_cache_set2(struct uwsgi_cache *uc, char *key, uint16_t keylen, char *v
 			cache_unmark_blocks(uc, uci->first_block, uci->valsize);
 		}
 		if ( !(flags & UWSGI_CACHE_FLAG_MATH)) {
-			memcpy(uc->data + (uci->first_block * uc->blocksize), val, vallen);
+			memcpy(((char *) uc->data) + (uci->first_block * uc->blocksize), val, vallen);
 		}
 		else {
 			int64_t *num = (int64_t *)(((char *) uc->data) + (uci->first_block * uc->blocksize));
@@ -1432,7 +1432,7 @@ static int cache_magic_send_and_manage(int fd, struct uwsgi_buffer *ub, char *st
 	// ok now wait for the response, using the same buffer of the request
 	// NOTE: after using a uwsgi_buffer in that way we basically destroy (even if we can safely free it)
 	size_t rlen = ub->pos;
-	if (uwsgi_read_with_realloc(fd, &ub->buf, &rlen, timeout)) return -1;
+	if (uwsgi_read_with_realloc(fd, &ub->buf, &rlen, timeout, NULL, NULL)) return -1;
 	// try to fix the buffer to maintain size info
 	ub->pos = rlen;
 
@@ -1867,7 +1867,7 @@ void uwsgi_cache_sync_from_nodes(struct uwsgi_cache *uc) {
 		}
 
 		size_t rlen = ub->pos;
-		if (uwsgi_read_with_realloc(fd, &ub->buf, &rlen, uwsgi.shared->options[UWSGI_OPTION_SOCKET_TIMEOUT])) {
+		if (uwsgi_read_with_realloc(fd, &ub->buf, &rlen, uwsgi.shared->options[UWSGI_OPTION_SOCKET_TIMEOUT], NULL, NULL)) {
 			uwsgi_buffer_destroy(ub);
 			uwsgi_log("[cache-sync] unable to read from the cache server\n");
 			close(fd);

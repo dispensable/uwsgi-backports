@@ -16,6 +16,7 @@
 #ifndef MS_REC
 #define MS_REC 16384
 #endif
+#include <sys/statfs.h>
 #endif
 
 struct uwsgi_mount_flag {
@@ -102,7 +103,7 @@ uint64_t uwsgi_mount_flag(char *mflag) {
 }
 
 int uwsgi_mount(char *fs, char *what, char *where, char *flags) {
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) || defined(__GNU_kFreeBSD__)
 	struct iovec iov[6];
 #endif
 	unsigned long mountflags = 0;
@@ -121,7 +122,7 @@ int uwsgi_mount(char *fs, char *what, char *where, char *flags) {
 parsed:
 #ifdef __linux__
 	return mount(what, where, fs, mountflags, NULL);
-#elif defined(__FreeBSD__)
+#elif defined(__FreeBSD__) || defined(__GNU_kFreeBSD__)
 	iov[0].iov_base = "fstype";
 	iov[0].iov_len = 7;
 	iov[1].iov_base = fs;
@@ -189,7 +190,7 @@ unmountable:
 		free(slashed);
 	}
         return umount2(where, mountflags);
-#elif defined(__FreeBSD__)
+#elif defined(__FreeBSD__) || defined(__GNU_kFreeBSD__)
 	return unmount(where, mountflags);
 #endif
         return -1;
@@ -235,4 +236,19 @@ int uwsgi_umount_hook(char *arg) {
         }       
         free(tmp_arg);
         return 0;
+}
+
+int uwsgi_check_mountpoint(char *mountpoint) {
+#ifdef __linux__
+	struct statfs sfs;
+	int ret = statfs(mountpoint, &sfs);
+	if (ret) {
+		uwsgi_error("uwsgi_check_mountpoint()/statfs()");
+		return -1;
+	}
+	return 0;
+#else
+	uwsgi_log("this platform does not support mountpoints check !!!\n");
+	return -1;
+#endif
 }

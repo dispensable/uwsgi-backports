@@ -11,7 +11,7 @@ def get_python_version():
     return version
 
 NAME='python'
-GCC_LIST = ['python_plugin', 'pyutils', 'pyloader', 'wsgi_handlers', 'wsgi_headers', 'wsgi_subhandler', 'web3_subhandler', 'pump_subhandler', 'gil', 'uwsgi_pymodule', 'profiler', 'symimporter', 'tracebacker']
+GCC_LIST = ['python_plugin', 'pyutils', 'pyloader', 'wsgi_handlers', 'wsgi_headers', 'wsgi_subhandler', 'web3_subhandler', 'pump_subhandler', 'gil', 'uwsgi_pymodule', 'profiler', 'symimporter', 'tracebacker', 'raw']
 
 CFLAGS = ['-I' + sysconfig.get_python_inc(), '-I' + sysconfig.get_python_inc(plat_specific=True) ] 
 LDFLAGS = []
@@ -32,9 +32,17 @@ if not 'UWSGI_PYTHON_NOLIB' in os.environ:
         # try 3.x style config dir
         if not os.path.exists(libdir):
             libdir = '%s/lib/python%s/config-%s' % (sys.prefix, version, get_python_version())
-        libpath = '%s/%s' % (libdir, sysconfig.get_config_var('LDLIBRARY'))
-        if not os.path.exists(libpath): 
+
+        # get cpu type
+        uname = os.uname()
+        if uname[4].startswith('arm'):
             libpath = '%s/%s' % (libdir, sysconfig.get_config_var('LIBRARY'))
+            if not os.path.exists(libpath): 
+                libpath = '%s/%s' % (libdir, sysconfig.get_config_var('LDLIBRARY'))
+        else:
+            libpath = '%s/%s' % (libdir, sysconfig.get_config_var('LDLIBRARY'))
+            if not os.path.exists(libpath): 
+                libpath = '%s/%s' % (libdir, sysconfig.get_config_var('LIBRARY'))
         if not os.path.exists(libpath): 
             libpath = '%s/libpython%s.a' % (libdir, version)
         LIBS.append(libpath)

@@ -1,8 +1,16 @@
+PYTHON := python
+
 all:
-	python uwsgiconfig.py --build
+	$(PYTHON) uwsgiconfig.py --build $(PROFILE)
 
 clean:
-	python uwsgiconfig.py --clean
+	$(PYTHON) uwsgiconfig.py --clean
 
 check:
-	python uwsgiconfig.py --check
+	$(PYTHON) uwsgiconfig.py --check
+
+plugin.%:
+	$(PYTHON) uwsgiconfig.py --plugin plugins/$* $(PROFILE)
+
+%:
+	$(PYTHON) uwsgiconfig.py --build $@

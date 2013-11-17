@@ -7,6 +7,88 @@ extern struct uwsgi_plugin rack_plugin;
 
 #define uwsgi_rack_api(x, y, z) rb_define_module_function(rb_uwsgi_embedded, x, y, z)
 
+static VALUE rack_uwsgi_metric_get(VALUE *class, VALUE key) {
+	Check_Type(key, T_STRING);
+	int64_t value = uwsgi_metric_get(RSTRING_PTR(key), NULL);
+	return LONG2NUM(value);	
+}
+
+static VALUE rack_uwsgi_metric_set(VALUE *class, VALUE key, VALUE val) {
+        Check_Type(key, T_STRING);
+        Check_Type(val, T_FIXNUM); // should be T_BIGNUM...
+        if (uwsgi_metric_set(RSTRING_PTR(key), NULL, NUM2LONG(val) )) {
+		return Qnil;
+	}
+        return Qtrue;
+}
+
+static VALUE rack_uwsgi_metric_inc(int argc, VALUE *argv, VALUE *class) {
+	int64_t value = 1;
+	if (argc == 0) return Qnil;
+	Check_Type(argv[0], T_STRING);
+
+	if (argc > 1) {
+		Check_Type(argv[1], T_FIXNUM); // should be T_BIGNUM...
+		value = NUM2LONG(argv[1]);
+	}
+
+	if (uwsgi_metric_inc(RSTRING_PTR(argv[0]), NULL, value )) {
+                return Qnil;
+        }
+        return Qtrue;
+}
+
+static VALUE rack_uwsgi_metric_dec(int argc, VALUE *argv, VALUE *class) {
+        int64_t value = 1;
+        if (argc == 0) return Qnil;
+        Check_Type(argv[0], T_STRING);
+
+        if (argc > 1) {
+                Check_Type(argv[1], T_FIXNUM); // should be T_BIGNUM...
+                value = NUM2LONG(argv[1]);
+        }
+
+        if (uwsgi_metric_dec(RSTRING_PTR(argv[0]), NULL, value )) {
+                return Qnil;
+        }
+        return Qtrue;
+}
+
+static VALUE rack_uwsgi_metric_mul(int argc, VALUE *argv, VALUE *class) {
+        int64_t value = 1;
+        if (argc == 0) return Qnil;
+        Check_Type(argv[0], T_STRING);
+
+        if (argc > 1) {
+                Check_Type(argv[1], T_FIXNUM); // should be T_BIGNUM...
+                value = NUM2LONG(argv[1]);
+        }
+
+        if (uwsgi_metric_mul(RSTRING_PTR(argv[0]), NULL, value )) {
+                return Qnil;
+        }
+        return Qtrue;
+}
+
+static VALUE rack_uwsgi_metric_div(int argc, VALUE *argv, VALUE *class) {
+        int64_t value = 1;
+        if (argc == 0) return Qnil;
+        Check_Type(argv[0], T_STRING);
+
+        if (argc > 1) {
+                Check_Type(argv[1], T_FIXNUM); // should be T_BIGNUM...
+                value = NUM2LONG(argv[1]);
+        }
+
+        if (uwsgi_metric_div(RSTRING_PTR(argv[0]), NULL, value )) {
+                return Qnil;
+        }
+        return Qtrue;
+}
+
+
+
+
 static VALUE rack_uwsgi_warning(VALUE *class, VALUE rbmessage) {
 
 	Check_Type(rbmessage, T_STRING);
@@ -58,6 +140,11 @@ static VALUE rack_uwsgi_i_am_the_lord(VALUE *class, VALUE legion_name) {
         return Qfalse;
 }
 #endif
+
+static VALUE rack_uwsgi_connection_fd(VALUE *class) {
+	struct wsgi_request *wsgi_req = current_wsgi_req();
+        return INT2NUM(wsgi_req->fd);
+}
 
 
 
@@ -718,7 +805,7 @@ static VALUE uwsgi_ruby_signal_registered(VALUE *class, VALUE signum) {
 static VALUE uwsgi_ruby_do_rpc(int argc, VALUE *rpc_argv, VALUE *class) {
 
 	char *node = NULL, *func;
-        uint16_t size = 0;
+        uint64_t size = 0;
 
         char *argv[256];
         uint16_t argvs[256];
@@ -1084,6 +1171,8 @@ void uwsgi_rack_init_api() {
 #ifdef UWSGI_SSL
 	uwsgi_rack_api("i_am_the_lord", rack_uwsgi_i_am_the_lord, 1);
 #endif
+
+	uwsgi_rack_api("connection_fd", rack_uwsgi_connection_fd, 0);
 	
 
         uwsgi_rack_api("cache_get", rack_uwsgi_cache_get, -1);
@@ -1098,6 +1187,13 @@ void uwsgi_rack_init_api() {
         uwsgi_rack_api("cache_update!", rack_uwsgi_cache_update_exc, -1);
         uwsgi_rack_api("cache_clear", rack_uwsgi_cache_clear, -1);
         uwsgi_rack_api("cache_clear!", rack_uwsgi_cache_clear_exc, -1);
+
+        uwsgi_rack_api("metric_get", rack_uwsgi_metric_get, 1);
+        uwsgi_rack_api("metric_set", rack_uwsgi_metric_set, 2);
+        uwsgi_rack_api("metric_inc", rack_uwsgi_metric_inc, -1);
+        uwsgi_rack_api("metric_dec", rack_uwsgi_metric_dec, -1);
+        uwsgi_rack_api("metric_mul", rack_uwsgi_metric_mul, -1);
+        uwsgi_rack_api("metric_div", rack_uwsgi_metric_div, -1);
 
         VALUE uwsgi_rb_opt_hash = rb_hash_new();
         int i;

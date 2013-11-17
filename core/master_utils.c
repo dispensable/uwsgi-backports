@@ -151,7 +151,13 @@ int uwsgi_calc_cheaper(void) {
 		uwsgi.cheaper_fifo_delta = 0;
 	}
 
-	if (!ignore_algo) needed_workers = uwsgi.cheaper_algo();
+	// if cheaper limits wants to change worker count, then skip cheaper algo
+	if (!needed_workers) needed_workers = uwsgi.cheaper_algo(!ignore_algo);
+	// safe check to verify if cheaper algo obeyed ignore_algo value
+	if (ignore_algo && needed_workers > 0) {
+		uwsgi_log("BUG! cheaper algo returned %d but it cannot spawn any worker at this time!\n", needed_workers);
+		needed_workers = 0;
+	}
 
 	if (needed_workers > 0) {
 		for (i = 1; i <= uwsgi.numproc; i++) {
@@ -189,7 +195,7 @@ int uwsgi_calc_cheaper(void) {
 }
 
 // fake algo to allow control with the fifo
-int uwsgi_cheaper_algo_manual(void) {
+int uwsgi_cheaper_algo_manual(int can_spawn) {
 	return 0;
 }
 
@@ -228,7 +234,7 @@ int uwsgi_cheaper_algo_manual(void) {
 */
 
 
-int uwsgi_cheaper_algo_spare(void) {
+int uwsgi_cheaper_algo_spare(int can_spawn) {
 
 	int i;
 	static uint64_t overload_count = 0;
@@ -252,7 +258,7 @@ int uwsgi_cheaper_algo_spare(void) {
 healthy:
 
 	// are we overloaded ?
-	if (overload_count > uwsgi.cheaper_overload) {
+	if (can_spawn && overload_count > uwsgi.cheaper_overload) {
 
 #ifdef UWSGI_DEBUG
 		uwsgi_log("overloaded !!!\n");
@@ -320,7 +326,7 @@ healthy:
 
 */
 
-int uwsgi_cheaper_algo_backlog(void) {
+int uwsgi_cheaper_algo_backlog(int can_spawn) {
 
 	int i;
 #ifdef __linux__
@@ -329,7 +335,7 @@ int uwsgi_cheaper_algo_backlog(void) {
 	int backlog = 0;
 #endif
 
-	if (backlog > (int) uwsgi.cheaper_overload) {
+	if (can_spawn && backlog > (int) uwsgi.cheaper_overload) {
 		// activate the first available worker (taking step into account)
 		int decheaped = 0;
 		// search for cheaped workers
@@ -865,6 +871,70 @@ struct uwsgi_stats *uwsgi_master_generate_stats() {
 		goto end;
 	}
 
+	if (uwsgi.has_metrics) {
+		if (uwsgi_stats_key(us, "metrics"))
+                	goto end;
+
+		if (uwsgi_stats_object_open(us))
+			goto end;
+
+		uwsgi_rlock(uwsgi.metrics_lock);
+		struct uwsgi_metric *um = uwsgi.metrics;
+		while(um) {
+        		int64_t um_val = *um->value;
+
+			if (uwsgi_stats_key(us, um->name)) {
+				uwsgi_rwunlock(uwsgi.metrics_lock);
+                		goto end;
+			}
+
+			if (uwsgi_stats_object_open(us)) {
+				uwsgi_rwunlock(uwsgi.metrics_lock);
+                                goto end;
+			}
+
+			if (uwsgi_stats_keylong(us, "type", (long long) um->type)) {
+        			uwsgi_rwunlock(uwsgi.metrics_lock);
+				goto end;
+			} 
+
+			if (uwsgi_stats_comma(us)) {
+        			uwsgi_rwunlock(uwsgi.metrics_lock);
+				goto end;
+			}
+
+			if (uwsgi_stats_keyval_comma(us, "oid", um->oid ? um->oid : "")) {
+                                uwsgi_rwunlock(uwsgi.metrics_lock);
+                                goto end;
+                        }
+
+			if (uwsgi_stats_keyslong(us, "value", (long long) um_val)) {
+        			uwsgi_rwunlock(uwsgi.metrics_lock);
+				goto end;
+			} 
+
+			if (uwsgi_stats_object_close(us)) {
+                                uwsgi_rwunlock(uwsgi.metrics_lock);
+                                goto end;
+                        }
+
+			um = um->next;
+			if (um) {
+				if (uwsgi_stats_comma(us)) {
+        				uwsgi_rwunlock(uwsgi.metrics_lock);
+					goto end;
+				}
+			}
+		}
+        	uwsgi_rwunlock(uwsgi.metrics_lock);
+
+		if (uwsgi_stats_object_close(us))
+			goto end;
+
+		if (uwsgi_stats_comma(us))
+		goto end;
+	}
+
 	if (uwsgi_stats_key(us, "sockets"))
 		goto end;
 
@@ -1345,7 +1415,7 @@ end:
 	return NULL;
 }
 
-void uwsgi_register_cheaper_algo(char *name, int (*func) (void)) {
+void uwsgi_register_cheaper_algo(char *name, int (*func) (int)) {
 
 	struct uwsgi_cheaper_algo *uca = uwsgi.cheaper_algos;
 

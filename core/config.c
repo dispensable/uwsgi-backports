@@ -293,8 +293,25 @@ int uwsgi_count_options(struct uwsgi_option *uopt) {
         return count;
 }
 
+int uwsgi_opt_exists(char *name) {
+	struct uwsgi_option *op = uwsgi.options;
+	while (op->name) {
+		if (!strcmp(name, op->name)) return 1;
+		op++;
+	}
+	return 0;	
+}
+
+/*
+	avoid loops here !!!
+*/
 struct uwsgi_option *uwsgi_opt_get(char *name) {
-        struct uwsgi_option *op = uwsgi.options;
+        struct uwsgi_option *op;
+	int round = 0;
+retry:
+	round++;
+	if (round > 2) goto end;
+	op = uwsgi.options;
 
         while (op->name) {
                 if (!strcmp(name, op->name)) {
@@ -303,10 +320,26 @@ struct uwsgi_option *uwsgi_opt_get(char *name) {
                 op++;
         }
 
+	if (uwsgi.autoload) {
+		if (uwsgi_try_autoload(name)) goto retry;
+	}
+
+end:
+	if (uwsgi.strict) {
+                uwsgi_log("[strict-mode] unknown config directive: %s\n", name);
+                exit(1);
+        }
+
         return NULL;
 }
 
+
+
 void add_exported_option(char *key, char *value, int configured) {
+	add_exported_option_do(key, value, configured, 0);
+}
+
+void add_exported_option_do(char *key, char *value, int configured, int placeholder_only) {
 
 	struct uwsgi_string_list *blacklist = uwsgi.blacklist;
 	struct uwsgi_string_list *whitelist = uwsgi.whitelist;
@@ -394,6 +427,15 @@ add:
 	uwsgi.exported_opts_cnt++;
 	uwsgi.dirty_config = 1;
 
+	if (placeholder_only) {
+		if (uwsgi_opt_exists(key)) {
+			uwsgi_log("you cannot use %s as a placeholder, it is already available as an option\n");
+			exit(1);
+		}
+		uwsgi.exported_opts[id]->configured = 1;
+		return;
+	}
+
 	struct uwsgi_option *op = uwsgi_opt_get(key);
 	if (op) {
 		// requires master ?
@@ -451,17 +493,16 @@ add:
 		if (op->flags & UWSGI_OPT_MIME) {
 			uwsgi.build_mime_dict = 1;
 		}
+		// enable metrics ?
+		if (op->flags & UWSGI_OPT_METRICS) {
+                        uwsgi.has_metrics = 1;
+                }
 		// immediate ?
 		if (op->flags & UWSGI_OPT_IMMEDIATE) {
 			op->func(key, value, op->data);
 			uwsgi.exported_opts[id]->configured = 1;
 		}
 	}
-	else if (uwsgi.strict) {
-		uwsgi_log("[strict-mode] unknown config directive: %s\n", key);
-		exit(1);
-	}
-
 }
 
 void uwsgi_fallback_config() {
@@ -476,4 +517,284 @@ void uwsgi_fallback_config() {
         	uwsgi_error("execvp()");
         	// never here
 	}
+}
+
+int uwsgi_manage_opt(char *key, char *value) {
+
+        struct uwsgi_option *op = uwsgi_opt_get(key);
+	if (op) {
+        	op->func(key, value, op->data);
+                return 1;
+        }
+        return 0;
+
+}
+
+void uwsgi_configure() {
+
+        int i;
+
+        // and now apply the remaining configs
+restart:
+        for (i = 0; i < uwsgi.exported_opts_cnt; i++) {
+                if (uwsgi.exported_opts[i]->configured)
+                        continue;
+                uwsgi.dirty_config = 0;
+                uwsgi.exported_opts[i]->configured = uwsgi_manage_opt(uwsgi.exported_opts[i]->key, uwsgi.exported_opts[i]->value);
+		// some option could cause a dirty config tree
+                if (uwsgi.dirty_config)
+                        goto restart;
+        }
+
+}
+
+
+void uwsgi_opt_custom(char *key, char *value, void *data ) {
+        struct uwsgi_custom_option *uco = (struct uwsgi_custom_option *)data;
+        size_t i, count = 1;
+        size_t value_len = 0;
+        if (value)
+                value_len = strlen(value);
+        off_t pos = 0;
+        char **opt_argv;
+        char *tmp_val = NULL, *p = NULL;
+
+        // now count the number of args
+        for (i = 0; i < value_len; i++) {
+                if (value[i] == ' ') {
+                        count++;
+                }
+        }
+
+        // allocate a tmp array
+        opt_argv = uwsgi_calloc(sizeof(char *) * count);
+        //make a copy of the value;
+        if (value_len > 0) {
+                tmp_val = uwsgi_str(value);
+                // fill the array of options
+                char *p, *ctx = NULL;
+                uwsgi_foreach_token(tmp_val, " ", p, ctx) {
+                        opt_argv[pos] = p;
+                        pos++;
+                }
+        }
+        else {
+                // no argument specified
+                opt_argv[0] = "";
+        }
+
+#ifdef UWSGI_DEBUG
+        uwsgi_log("found custom option %s with %d args\n", key, count);
+#endif
+
+        // now make a copy of the option template
+        char *tmp_opt = uwsgi_str(uco->value);
+        // split it
+        char *ctx = NULL;
+        uwsgi_foreach_token(tmp_opt, ";", p, ctx) {
+                char *equal = strchr(p, '=');
+                if (!equal)
+                        goto clear;
+                *equal = '\0';
+
+                // build the key
+                char *new_key = uwsgi_str(p);
+                for (i = 0; i < count; i++) {
+                        char *old_key = new_key;
+                        char *tmp_num = uwsgi_num2str(i + 1);
+                        char *placeholder = uwsgi_concat2((char *) "$", tmp_num);
+                        free(tmp_num);
+                        new_key = uwsgi_substitute(old_key, placeholder, opt_argv[i]);
+                        if (new_key != old_key)
+                                free(old_key);
+                        free(placeholder);
+                }
+
+                // build the value
+                char *new_value = uwsgi_str(equal + 1);
+                for (i = 0; i < count; i++) {
+                        char *old_value = new_value;
+                        char *tmp_num = uwsgi_num2str(i + 1);
+                        char *placeholder = uwsgi_concat2((char *) "$", tmp_num);
+                        free(tmp_num);
+                        new_value = uwsgi_substitute(old_value, placeholder, opt_argv[i]);
+                        if (new_value != old_value)
+                                free(old_value);
+                        free(placeholder);
+                }
+                // ignore return value here
+                uwsgi_manage_opt(new_key, new_value);
+        }
+
+clear:
+        free(tmp_val);
+        free(tmp_opt);
+        free(opt_argv);
+
+}
+
+char *uwsgi_get_exported_opt(char *key) {
+
+        int i;
+
+        for (i = 0; i < uwsgi.exported_opts_cnt; i++) {
+                if (!strcmp(uwsgi.exported_opts[i]->key, key)) {
+                        return uwsgi.exported_opts[i]->value;
+                }
+        }
+
+        return NULL;
+}
+
+char *uwsgi_get_optname_by_index(int index) {
+
+        struct uwsgi_option *op = uwsgi.options;
+
+        while (op->name) {
+                if (op->shortcut == index) {
+                        return op->name;
+                }
+                op++;
+        }
+
+        return NULL;
+}
+
+/*
+
+	this works as a pipeline
+
+	processes = 2
+	cpu_cores = 8
+	foobar = %(processes cpu_cores + 2)
+
+	translate as:
+
+		step1 = proceses cpu_cores = 2 8 = 28 (string concatenation)
+
+		step1 + = step1_apply_func_plus (func token)
+
+		step1_apply_func_plus 2 = 28 + 2 = 30 (math)
+
+*/
+
+char *uwsgi_manage_placeholder(char *key) {
+	enum {
+		concat = 0,
+		sum,
+		sub,
+		mul,
+		div,
+	} state;
+
+	state = concat;
+	char *current_value = NULL;
+
+	char *space = strchr(key, ' ');
+	if (!space) {
+		return uwsgi_get_exported_opt(key);
+	}
+	// let's start the heavy metal here
+	char *tmp_value = uwsgi_str(key);
+	char *p, *ctx = NULL;
+        uwsgi_foreach_token(tmp_value, " ", p, ctx) {
+		char *value = NULL;
+		if (is_a_number(p)) {
+			value = uwsgi_str(p);
+		}
+		else if (!strcmp(p, "+")) {
+			state = sum;
+			continue;
+		}
+		else if (!strcmp(p, "-")) {
+			state = sub;
+			continue;
+		}
+		else if (!strcmp(p, "*")) {
+			state = mul;
+			continue;
+		}
+		else if (!strcmp(p, "/")) {
+			state = div;
+			continue;
+		}
+		else if (!strcmp(p, "++")) {
+			if (current_value) {
+				int64_t tmp_value = strtoll(current_value, NULL, 10);
+				free(current_value);
+				current_value = uwsgi_64bit2str(tmp_value+1);
+			}
+			state = concat;
+			continue;
+		}
+		else if (!strcmp(p, "--")) {
+			if (current_value) {
+				int64_t tmp_value = strtoll(current_value, NULL, 10);
+				free(current_value);
+				current_value = uwsgi_64bit2str(tmp_value-1);
+			}
+			state = concat;
+			continue;
+		}
+		// find the option
+		else {
+			char *ov = uwsgi_get_exported_opt(p);
+			if (!ov) ov = "";
+			value = uwsgi_str(ov);
+		}
+
+		int64_t arg1n = 0, arg2n = 0;
+		char *arg1 = "", *arg2 = "";	
+
+		switch(state) {
+			case concat:
+				if (current_value) arg1 = current_value;
+				if (value) arg2 = value;
+				char *ret = uwsgi_concat2(arg1, arg2);
+				if (current_value) free(current_value);
+				current_value = ret;	
+				break;
+			case sum:
+				if (current_value) arg1n = strtoll(current_value, NULL, 10);
+				if (value) arg2n = strtoll(value, NULL, 10);
+				if (current_value) free(current_value);
+				current_value = uwsgi_64bit2str(arg1n + arg2n);
+				break;
+			case sub:
+				if (current_value) arg1n = strtoll(current_value, NULL, 10);
+				if (value) arg2n = strtoll(value, NULL, 10);
+				if (current_value) free(current_value);
+				current_value = uwsgi_64bit2str(arg1n - arg2n);
+				break;
+			case mul:
+				if (current_value) arg1n = strtoll(current_value, NULL, 10);
+				if (value) arg2n = strtoll(value, NULL, 10);
+				if (current_value) free(current_value);
+				current_value = uwsgi_64bit2str(arg1n * arg2n);
+				break;
+			case div:
+				if (current_value) arg1n = strtoll(current_value, NULL, 10);
+				if (value) arg2n = strtoll(value, NULL, 10);
+				if (current_value) free(current_value);
+				// avoid division by zero
+				if (arg2n == 0) {
+					current_value = uwsgi_64bit2str(0);
+				}
+				else {
+					current_value = uwsgi_64bit2str(arg1n / arg2n);
+				}
+				break;
+			default:
+				break;
+		}
+
+		// over engineering
+		if (value)
+			free(value);
+
+		// reset state to concat
+		state = concat;
+	}
+
+	return current_value;
 }

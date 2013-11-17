@@ -4,18 +4,18 @@ extern struct uwsgi_server uwsgi;
 
 /*
 
-	This is a general purpose async loop engine (it expects a coroutine based approach)
+	This is a general-purpose async loop engine (it expects a coroutine-based approach)
 
 	You can see it as an hub holding the following structures:
 
-	1) the runqueue, cores ready to be run are appended in this list
+	1) the runqueue, cores ready to be run are appended to this list
 
 	2) the fd list, this is a list of monitored file descriptors, a core can wait for all the file descriptors it needs
 
-	3) the timeout value, if set the current core will timeout aftert he specified number of seconds (unless an event cancel it)
+	3) the timeout value, if set, the current core will timeout after the specified number of seconds (unless an event cancels it)
 
 
-	IMPORTANT: this is not a callback based engine !!!
+	IMPORTANT: this is not a callback-based engine !!!
 
 */
 
@@ -159,7 +159,7 @@ static void async_expire_timeouts(uint64_t now) {
 			wsgi_req = (struct wsgi_request *) urbt->data;
 			// timeout expired
 			wsgi_req->async_timed_out = 1;
-			// reset teh request
+			// reset the request
 			async_reset_request(wsgi_req);
 			// push it in the runqueue
 			runqueue_push(wsgi_req);
@@ -308,29 +308,42 @@ end:
 	async_reset_request(uwsgi.wsgi_req);
 	uwsgi_close_request(uwsgi.wsgi_req);
 	uwsgi.wsgi_req->async_status = UWSGI_OK;	
+	uwsgi.async_queue_unused_ptr++;
+        uwsgi.async_queue_unused[uwsgi.async_queue_unused_ptr] = uwsgi.wsgi_req;
 }
 
 void async_schedule_to_req_green(void) {
+	struct wsgi_request *wsgi_req = uwsgi.wsgi_req;
 #ifdef UWSGI_ROUTING
-        if (uwsgi_apply_routes(uwsgi.wsgi_req) == UWSGI_ROUTE_BREAK) {
+        if (uwsgi_apply_routes(wsgi_req) == UWSGI_ROUTE_BREAK) {
                 goto end;
         }
 #endif
         for(;;) {
-                if (uwsgi.p[uwsgi.wsgi_req->uh->modifier1]->request(uwsgi.wsgi_req) <= UWSGI_OK) {
+                if (uwsgi.p[wsgi_req->uh->modifier1]->request(wsgi_req) <= UWSGI_OK) {
                         break;
                 }
-                uwsgi.wsgi_req->switches++;
+                wsgi_req->switches++;
+		if (uwsgi.schedule_fix) {
+			uwsgi.schedule_fix(wsgi_req);
+		}
                 // switch after each yield
-                uwsgi.schedule_to_main(uwsgi.wsgi_req);
+                uwsgi.schedule_to_main(wsgi_req);
         }
 
 #ifdef UWSGI_ROUTING
 end:
 #endif
-        async_reset_request(uwsgi.wsgi_req);
-        uwsgi_close_request(uwsgi.wsgi_req);
-        uwsgi.wsgi_req->async_status = UWSGI_OK;
+	// re-set the global state
+	uwsgi.wsgi_req = wsgi_req;
+        async_reset_request(wsgi_req);
+        uwsgi_close_request(wsgi_req);
+	// re-set the global state (routing could have changed it)
+	uwsgi.wsgi_req = wsgi_req;
+        wsgi_req->async_status = UWSGI_OK;
+	uwsgi.async_queue_unused_ptr++;
+        uwsgi.async_queue_unused[uwsgi.async_queue_unused_ptr] = wsgi_req;
+	
 }
 
 void async_loop() {
@@ -511,19 +524,11 @@ void async_loop() {
 			uwsgi.wsgi_req->switches++;
 
 			// request ended ?
-			if (uwsgi.wsgi_req->async_status <= UWSGI_OK) {
+			if (uwsgi.wsgi_req->async_status <= UWSGI_OK ||
+				uwsgi.wsgi_req->waiting_fds || uwsgi.wsgi_req->async_timeout) {
 				// remove from the runqueue
 				runqueue_remove(current_request);
-				// push wsgi_request in the unused stack
-				uwsgi.async_queue_unused_ptr++;
-				uwsgi.async_queue_unused[uwsgi.async_queue_unused_ptr] = uwsgi.wsgi_req;
-
 			}
-			else if (uwsgi.wsgi_req->waiting_fds || uwsgi.wsgi_req->async_timeout) {
-				// remove this request from the runqueue
-				runqueue_remove(current_request);
-			}
-
 			current_request = next_request;
 		}
 
