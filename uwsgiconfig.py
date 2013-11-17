@@ -1,6 +1,6 @@
 # uWSGI build system
 
-uwsgi_version = '1.9.17.1'
+uwsgi_version = '1.9.20'
 
 import os
 import re
@@ -13,6 +13,7 @@ uwsgi_cpu = os.uname()[4]
 import sys
 import subprocess
 from threading import Thread,Lock
+from optparse import OptionParser
 
 try:
     from queue import Queue
@@ -56,26 +57,34 @@ binary_list = []
 
 # this is used for reporting (at the end of the build)
 # the server configuration
-report = {}
-report['kernel'] = False
-report['execinfo'] = False
-report['ifaddrs'] = False
-report['locking'] = False
-report['event'] = False
-report['timer'] = False
-report['filemonitor'] = False
-report['pcre'] = False
-report['matheval'] = False
-report['routing'] = False
-report['capabilities'] = False
-report['yaml'] = False
-report['json'] = False
-report['ssl'] = False
-report['zeromq'] = False
-report['xml'] = False
-report['debug'] = False
-report['plugin_dir'] = False
-report['zlib'] = False
+report = {
+    'kernel': False,
+    'execinfo': False,
+    'ifaddrs': False,
+    'locking': False,
+    'event': False,
+    'timer': False,
+    'filemonitor': False,
+    'pcre': False,
+    'routing': False,
+    'capabilities': False,
+    'yaml': False,
+    'json': False,
+    'ssl': False,
+    'zeromq': False,
+    'xml': False,
+    'debug': False,
+    'plugin_dir': False,
+    'zlib': False,
+}
+
+verbose_build = False
+
+def print_compilation_output(default_str, verbose_str):
+    if verbose_build:
+        print(verbose_str)
+    elif default_str is not None:
+        print(default_str)
 
 compile_queue = None
 print_lock = None
@@ -85,8 +94,8 @@ def thread_compiler(num):
     while True:
         (objfile, cmdline) = compile_queue.get()
         if objfile:
-            print_lock.acquire()    
-            print("[thread %d][%s] %s" % (num, GCC, objfile))
+            print_lock.acquire()
+            print_compilation_output("[thread %d][%s] %s" % (num, GCC, objfile), "[thread %d] %s" % (num, cmdline))
             print_lock.release()    
             ret = os.system(cmdline)
             if ret != 0:
@@ -170,7 +179,7 @@ def push_print(msg):
 
 def push_command(objfile, cmdline):
     if not compile_queue:
-        print("[%s] %s" % (GCC, objfile))
+        print_compilation_output("[%s] %s" % (GCC, objfile), cmdline)
         ret = os.system(cmdline)
         if ret != 0:
             sys.exit(1)
@@ -205,7 +214,7 @@ def compile(cflags, last_cflags_ts, objfile, srcfile):
     push_command(objfile, cmdline)
 
 
-def build_uwsgi(uc, print_only=False):
+def build_uwsgi(uc, print_only=False, gcll=None):
 
     global print_lock, compile_queue, thread_compilers
 
@@ -218,10 +227,17 @@ def build_uwsgi(uc, print_only=False):
             t.start()
             thread_compilers.append(t)
 
-    gcc_list, cflags, ldflags, libs = uc.get_gcll()
+    if not gcll:
+        gcc_list, cflags, ldflags, libs = uc.get_gcll()
+    else:
+        gcc_list, cflags, ldflags, libs = gcll
 
     if 'UWSGI_EMBED_PLUGINS' in os.environ:
-        uc.set('embedded_plugins', uc.get('embedded_plugins') + ',' + os.environ['UWSGI_EMBED_PLUGINS'])
+        ep = uc.get('embedded_plugins')
+        if ep:
+            uc.set('embedded_plugins', ep + ',' + os.environ['UWSGI_EMBED_PLUGINS'])
+        else:
+            uc.set('embedded_plugins', os.environ['UWSGI_EMBED_PLUGINS'])
 
     if uc.get('embedded_plugins'):
         ep = uc.get('embedded_plugins').split(',')
@@ -291,7 +307,6 @@ def build_uwsgi(uc, print_only=False):
     open('core/dot_h.c', 'w').write('char *uwsgi_dot_h = "%s";\n' % uwsgi_dot_h);
     gcc_list.append('core/dot_h') 
     
-
     cflags.append('-DUWSGI_CFLAGS=\\"%s\\"' % uwsgi_cflags)
     cflags.append('-DUWSGI_BUILD_DATE="\\"%s\\""' % time.strftime("%d %B %Y %H:%M:%S"))
 
@@ -303,7 +318,18 @@ def build_uwsgi(uc, print_only=False):
         if objfile == 'uwsgi':
             objfile = 'main'
         if not objfile.endswith('.a') and not objfile.endswith('.o'):
-            compile(' '.join(cflags), last_cflags_ts, objfile + '.o', file + '.c')
+            if objfile.endswith('.c') or objfile.endswith('.cc') or objfile.endswith('.m') or objfile.endswith('.go'):
+                if objfile.endswith('.go'):
+                    cflags.append('-Wno-error') 
+                compile(' '.join(cflags), last_cflags_ts, objfile + '.o', file)
+                if objfile.endswith('.go'):
+                    cflags.pop()
+            else:
+                if objfile == 'core/dot_h':
+                    cflags.append('-g')
+                compile(' '.join(cflags), last_cflags_ts, objfile + '.o', file + '.c')
+                if objfile == 'core/dot_h':
+                    cflags.pop()
 
     if uc.get('embedded_plugins'):
         ep = uc.get('embedded_plugins').split(',')
@@ -380,11 +406,13 @@ def build_uwsgi(uc, print_only=False):
                         gcc_list.append(cfile)
                     elif cfile.endswith('.o'):
                         gcc_list.append('%s/%s' % (path, cfile))
-                    elif not cfile.endswith('.c') and not cfile.endswith('.cc') and not cfile.endswith('.m'):
+                    elif not cfile.endswith('.c') and not cfile.endswith('.cc') and not cfile.endswith('.go') and not cfile.endswith('.m'):
                         compile(' '.join(uniq_warnings(p_cflags)), last_cflags_ts,
                             path + '/' + cfile + '.o', path + '/' + cfile + '.c')
                         gcc_list.append('%s/%s' % (path, cfile))
                     else:
+                        if cfile.endswith('.go'):
+                            p_cflags.append('-Wno-error')
                         compile(' '.join(uniq_warnings(p_cflags)), last_cflags_ts,
                             path + '/' + cfile + '.o', path + '/' + cfile)
                         gcc_list.append('%s/%s' % (path, cfile))
@@ -433,10 +461,17 @@ def build_uwsgi(uc, print_only=False):
 
     bin_name = os.environ.get('UWSGI_BIN_NAME', uc.get('bin_name'))
 
-    if uc.get('embed_config'):
-        gcc_list.append(uc.get('embed_config'))
+    if uc.embed_config:
+        gcc_list.append(uc.embed_config)
     for ef in binary_list:
         gcc_list.append("build/%s" % ef)
+
+    additional_sources = os.environ.get('UWSGI_ADDITIONAL_SOURCES')
+    if not additional_sources:
+        additional_sources = uc.get('additional_sources')
+    if additional_sources:
+        for item in additional_sources.split(','):
+            gcc_list.append(item)
 
     if compile_queue:
         for t in thread_compilers:
@@ -512,6 +547,7 @@ class uConf(object):
             'core/setup_utils', 'core/clock', 'core/init', 'core/buffer', 'core/reader', 'core/writer', 'core/alarm', 'core/cron', 'core/hooks',
             'core/plugins', 'core/lock', 'core/cache', 'core/daemons', 'core/errors', 'core/hash', 'core/master_events', 'core/chunked',
             'core/queue', 'core/event', 'core/signal', 'core/strings', 'core/progress', 'core/timebomb', 'core/ini', 'core/fsmon', 'core/mount',
+            'core/metrics',
             'core/rpc', 'core/gateway', 'core/loop', 'core/cookie', 'core/querystring', 'core/rb_timers', 'core/transformations', 'core/uwsgi']
         # add protocols
         self.gcc_list.append('proto/base')
@@ -519,6 +555,7 @@ class uConf(object):
         self.gcc_list.append('proto/http')
         self.gcc_list.append('proto/fastcgi')
         self.gcc_list.append('proto/scgi')
+        self.gcc_list.append('proto/puwsgi')
         self.include_path = []
 
         if 'UWSGI_INCLUDES' in os.environ:
@@ -530,7 +567,8 @@ class uConf(object):
         report['kernel'] = uwsgi_os
 
         if uwsgi_os == 'Linux':
-            self.gcc_list.append('lib/linux_ns')
+            if uwsgi_cpu != 'ia64':
+                self.gcc_list.append('lib/linux_ns')
             try:
                 lk_ver = uwsgi_os_k.split('.')
                 if int(lk_ver[0]) <= 2 and int(lk_ver[1]) <= 6 and int(lk_ver[2]) <= 9:
@@ -597,8 +635,11 @@ class uConf(object):
 
         self.ldflags = os.environ.get("LDFLAGS", "").split()
         self.libs = ['-lpthread', '-lm', '-rdynamic']
-        if uwsgi_os == 'Linux':
+        if uwsgi_os in ('Linux', 'GNU', 'GNU/kFreeBSD'):
             self.libs.append('-ldl')
+        if uwsgi_os == 'GNU/kFreeBSD':
+            self.cflags.append('-D__GNU_kFreeBSD__')
+            self.libs.append('-lbsd')
 
         # check for inherit option
         inherit = self.get('inherit')
@@ -674,6 +715,11 @@ class uConf(object):
                 self.libs.append('-lexecinfo')
                 report['execinfo'] = True
 
+        if uwsgi_os == 'GNU/kFreeBSD':
+            if self.has_include('execinfo.h'):
+                self.cflags.append('-DUWSGI_HAS_EXECINFO')
+                report['execinfo'] = True
+
         if self.has_include('zlib.h'):
             self.cflags.append('-DUWSGI_ZLIB')
             self.libs.append('-lz')
@@ -697,6 +743,10 @@ class uConf(object):
             self.ldflags.append('-L/lib')
             if not uwsgi_os_v.startswith('Nexenta'):
                 self.libs.remove('-rdynamic')
+
+        if uwsgi_os == 'GNU/kFreeBSD':
+            if self.has_include('kvm.h'):
+                kvm_list.append('GNU/kFreeBSD')
 
         if uwsgi_os in kvm_list:
             self.libs.append('-lkvm')
@@ -730,7 +780,7 @@ class uConf(object):
                 locking_mode = 'pthread_mutex'
             # FreeBSD umtx is still not ready for process shared locking
             # starting from FreeBSD 9 posix semaphores can be shared between processes
-            elif uwsgi_os == 'FreeBSD':
+            elif uwsgi_os in ('FreeBSD', 'GNU/kFreeBSD'):
                  try:
                      fbsd_major = int(uwsgi_os_k.split('.')[0])
                      if fbsd_major >= 9:
@@ -773,7 +823,7 @@ class uConf(object):
                 if int(sun_major) >= 5:
                     if int(sun_minor) >= 10:
                         event_mode = 'port'
-            elif uwsgi_os in ('Darwin', 'FreeBSD', 'OpenBSD', 'NetBSD', 'DragonFly'):
+            elif uwsgi_os in ('Darwin', 'FreeBSD', 'GNU/kFreeBSD', 'OpenBSD', 'NetBSD', 'DragonFly'):
                 event_mode = 'kqueue'
             elif uwsgi_os.startswith('CYGWIN') or uwsgi_os == 'GNU':
                 event_mode = 'poll'
@@ -816,7 +866,7 @@ class uConf(object):
                     if int(sun_minor) >= 10:
                         timer_mode = 'port'
 
-            elif uwsgi_os in ('Darwin', 'FreeBSD', 'OpenBSD', 'NetBSD', 'DragonFly'):
+            elif uwsgi_os in ('Darwin', 'FreeBSD', 'GNU/kFreeBSD', 'OpenBSD', 'NetBSD', 'DragonFly'):
                 timer_mode = 'kqueue'
 
         if timer_mode == 'timerfd':
@@ -843,7 +893,7 @@ class uConf(object):
                 if int(sun_major) >= 5:
                     if int(sun_minor) >= 10:
                         filemonitor_mode = 'port'
-            elif uwsgi_os in ('Darwin', 'FreeBSD', 'OpenBSD', 'NetBSD', 'DragonFly'):
+            elif uwsgi_os in ('Darwin', 'FreeBSD', 'GNU/kFreeBSD', 'OpenBSD', 'NetBSD', 'DragonFly'):
                 filemonitor_mode = 'kqueue'
 
         if filemonitor_mode == 'inotify':
@@ -931,19 +981,13 @@ class uConf(object):
             self.libs.append('-lcap')
             report['capabilities'] = True
 
-        if self.get('matheval'):
-            if (self.get('matheval') == 'auto' and self.has_include('matheval.h')) or self.get('matheval') == 'true':
-                self.cflags.append("-DUWSGI_MATHEVAL")
-                self.libs.append('-lmatheval')
-                report['matheval'] = True
-
         has_json = False
         has_uuid = False
 
         if self.has_include('uuid/uuid.h'):
             has_uuid = True
             self.cflags.append("-DUWSGI_UUID")
-            if uwsgi_os == 'Linux' or uwsgi_os.startswith('CYGWIN') or os.path.exists('/usr/lib/libuuid.so') or os.path.exists('/usr/local/lib/libuuid.so') or os.path.exists('/usr/lib64/libuuid.so') or os.path.exists('/usr/local/lib64/libuuid.so'):
+            if uwsgi_os in ('Linux', 'GNU', 'GNU/kFreeBSD') or uwsgi_os.startswith('CYGWIN') or os.path.exists('/usr/lib/libuuid.so') or os.path.exists('/usr/local/lib/libuuid.so') or os.path.exists('/usr/lib64/libuuid.so') or os.path.exists('/usr/local/lib64/libuuid.so'):
                 self.libs.append('-luuid')
 
         if self.get('append_version'):
@@ -952,17 +996,22 @@ class uConf(object):
             uwsgi_version += self.get('append_version')
 
 
-        if uwsgi_os == 'FreeBSD' and self.has_include('jail.h'):
+        if uwsgi_os in ('FreeBSD','GNU/kFreeBSD') and self.has_include('jail.h'):
             self.cflags.append('-DUWSGI_HAS_FREEBSD_LIBJAIL')
             self.libs.append('-ljail')
 
+        self.embed_config = None
+
         if uwsgi_os == 'Linux':
-            if self.get('embed_config'):
-                binary_link_cmd = "ld -r -b binary -o %s.o %s" % (self.get('embed_config'), self.get('embed_config'))
+            self.embed_config = os.environ.get('UWSGI_EMBED_CONFIG')
+            if not self.embed_config:
+                self.embed_config = self.get('embed_config')
+            if self.embed_config:
+                binary_link_cmd = "ld -r -b binary -o %s.o %s" % (self.embed_config, self.embed_config)
                 print(binary_link_cmd)
                 os.system(binary_link_cmd)
-                self.cflags.append("-DUWSGI_EMBED_CONFIG=_binary_%s_start" % self.get('embed_config').replace('.','_'))
-                self.cflags.append("-DUWSGI_EMBED_CONFIG_END=_binary_%s_end" % self.get('embed_config').replace('.','_'))
+                self.cflags.append("-DUWSGI_EMBED_CONFIG=_binary_%s_start" % self.embed_config.replace('.','_'))
+                self.cflags.append("-DUWSGI_EMBED_CONFIG_END=_binary_%s_end" % self.embed_config.replace('.','_'))
             if self.get('embed_files'):
                 for ef in self.get('embed_files').split(','):
                     ef_parts = ef.split('=')
@@ -1207,9 +1256,11 @@ def build_plugin(path, uc, cflags, ldflags, libs, name = None):
     for cfile in up['GCC_LIST']:
         if cfile.endswith('.a'): 
             gcc_list.append(cfile)
-        elif not cfile.endswith('.c') and not cfile.endswith('.cc') and not cfile.endswith('.m') and not cfile.endswith('.o'):
+        elif not cfile.endswith('.c') and not cfile.endswith('.cc') and not cfile.endswith('.m') and not cfile.endswith('.go') and not cfile.endswith('.o'):
             gcc_list.append(path + '/' + cfile + '.c')
         else:
+            if cfile.endswith('.go'):
+                p_cflags.append('-Wno-error')
             gcc_list.append(path + '/' + cfile)
     for bfile in up.get('BINARY_LIST', []):
         try:
@@ -1281,7 +1332,7 @@ def build_plugin(path, uc, cflags, ldflags, libs, name = None):
         need_pic = ' -L. -luwsgi'
 
     gccline = "%s%s %s -o %s.so %s %s %s %s" % (GCC, need_pic, shared_flag, plugin_dest, ' '.join(uniq_warnings(p_cflags)), ' '.join(gcc_list), ' '.join(uniq_warnings(p_ldflags)), ' '.join(uniq_warnings(p_libs)) )
-    print("[%s] %s.so" % (GCC, plugin_dest))
+    print_compilation_output("[%s] %s.so" % (GCC, plugin_dest), gccline)
 
     ret = os.system(gccline)
     if ret != 0:
@@ -1294,7 +1345,9 @@ def build_plugin(path, uc, cflags, ldflags, libs, name = None):
             for rp in requires:
                 f.write("requires=%s\n" % rp)
             f.close()
-            os.system("objcopy %s.so --add-section uwsgi=.uwsgi_plugin_section %s.so" % (plugin_dest, plugin_dest))
+            objline = "objcopy %s.so --add-section uwsgi=.uwsgi_plugin_section %s.so" % (plugin_dest, plugin_dest)
+            print_compilation_output(None, objline)
+            os.system(objline)
             os.unlink('.uwsgi_plugin_section')
     except:
         pass
@@ -1304,43 +1357,82 @@ def build_plugin(path, uc, cflags, ldflags, libs, name = None):
 
     print("*** %s plugin built and available in %s ***" % (name, plugin_dest + '.so'))
 
-if __name__ == "__main__":
-    try:
-        cmd = sys.argv[1]
-    except:
-        print("please specify an argument")
-        sys.exit(1)
+def vararg_callback(option, opt_str, value, parser):
+    assert value is None
+    value = []
+    for arg in parser.rargs:
+        # stop on --foo like options
+        if arg[:2] == "--" and len(arg) > 2:
+            break
+        # stop on -a, but not on -3 or -3.0
+        if arg[:1] == "-" and len(arg) > 1:
+            break
+        value.append(arg)
 
-    if cmd == '--build':
-        bconf = os.environ.get('UWSGI_PROFILE','default.ini')
+    del parser.rargs[:len(value)]
+    setattr(parser.values, option.dest, value)
+
+if __name__ == "__main__":
+    parser = OptionParser()
+    parser.add_option("-b", "--build", action="callback", callback=vararg_callback, dest="build", help="build a specific profile if provided or default.ini", metavar="PROFILE")
+    parser.add_option("-f", "--cflags", action="callback", callback=vararg_callback, dest="cflags", help="same as --build but less verbose", metavar="PROFILE")
+    parser.add_option("-u", "--unbit", action="store_true", dest="unbit", help="build unbit profile")
+    parser.add_option("-p", "--plugin", action="callback", callback=vararg_callback, dest="plugin", help="build a plugin as shared library, optionally takes a build profile name", metavar="PLUGIN [PROFILE]")
+    parser.add_option("-x", "--extra-plugin", action="callback", callback=vararg_callback,  dest="extra_plugin", help="build an external plugin as shared library, takes an optional include dir", metavar="PLUGIN [INCLUDE_DIR]")
+    parser.add_option("-c", "--clean", action="store_true", dest="clean", help="clean the build")
+    parser.add_option("-e", "--check", action="store_true", dest="check", help="run cppcheck")
+    parser.add_option("-v", "--verbose", action="store_true", dest="verbose", help="more verbose build")
+    parser.add_option("-g", "--debug", action="store_true", dest="debug", help="build with debug symbols, affects only full build")
+    parser.add_option("-a", "--asan", action="store_true", dest="asan", help="build with address sanitizer, it's a debug option and affects only full build")
+
+    (options, args) = parser.parse_args()
+
+    if options.verbose:
+        verbose_build = True
+
+    add_cflags = []
+    add_ldflags = []
+
+    if options.debug:
+       add_cflags.append('-g')
+       add_ldflags.append('-g')
+
+    if options.asan:
+       add_cflags.extend(['-g', '-fsanitize=address', '-fno-omit-frame-pointer'])
+       add_ldflags.extend(['-g', '-fsanitize=address'])
+
+    if options.build is not None or options.cflags is not None:
+        is_cflags = options.cflags is not None
         try:
-            bconf = sys.argv[2]
+            if not is_cflags:
+                bconf = options.build[0]
+            else:
+                bconf = options.cflags[0]
         except:
-            pass
+            bconf = os.environ.get('UWSGI_PROFILE','default.ini')
         if not bconf.endswith('.ini'):
             bconf += '.ini'
         if not '/' in bconf:
             bconf = 'buildconf/%s' % bconf
-        build_uwsgi(uConf(bconf))
-    elif cmd == '--cflags':
-        bconf = os.environ.get('UWSGI_PROFILE','default.ini')
-        try:
-            bconf = sys.argv[2]
-        except:
-            pass
-        if not bconf.endswith('.ini'):
-            bconf += '.ini'
-        if not '/' in bconf:
-            bconf = 'buildconf/%s' % bconf
-        build_uwsgi(uConf(bconf, True), True)
-    elif cmd == '--unbit':
+
+        uc = uConf(bconf, is_cflags)
+        if add_cflags or add_ldflags:
+            gcc_list, cflags, ldflags, libs = uc.get_gcll()
+            if add_cflags:
+                cflags.extend(add_cflags)
+            if add_ldflags:
+                ldflags.extend(add_ldflags)
+            gcll = (gcc_list, cflags, ldflags, libs)
+        else:
+            gcll = None
+        build_uwsgi(uc, is_cflags, gcll=gcll)
+    elif options.unbit:
         build_uwsgi(uConf('buildconf/unbit.ini'))
-    elif cmd == '--plugin':
-        bconf = os.environ.get('UWSGI_PROFILE','default.ini')
+    elif options.plugin:
         try:
-            bconf = sys.argv[3]
+            bconf = options.plugin[1]
         except:
-            pass
+            bconf = os.environ.get('UWSGI_PROFILE','default.ini')
         if not bconf.endswith('.ini'):
             bconf += '.ini'
         if not '/' in bconf:
@@ -1348,29 +1440,28 @@ if __name__ == "__main__":
         uc = uConf(bconf)
         gcc_list, cflags, ldflags, libs = uc.get_gcll()
         try:
-            name = sys.argv[4]
+            name = options.plugin[2]
         except:
             name = None
-        print("*** uWSGI building and linking plugin %s ***" % sys.argv[2] )
-        build_plugin(sys.argv[2], uc, cflags, ldflags, libs, name)
-    elif cmd == '--extra-plugin':
+        print("*** uWSGI building and linking plugin %s ***" % options.plugin[0] )
+        build_plugin(options.plugin[0], uc, cflags, ldflags, libs, name)
+    elif options.extra_plugin:
         print("*** uWSGI building and linking plugin ***")
-        cflags = spcall("%s --cflags" % sys.argv[2]).split()
+        cflags = spcall("%s --cflags" % options.extra_plugin[0]).split()
         try:
-            cflags.append('-I%s' % sys.argv[3]) 
+            cflags.append('-I%s' % options.extra_plugin[1])
         except:
             pass
         build_plugin('.', None, cflags, [], [], None)
-    elif cmd == '--clean':
+    elif options.clean:
         os.system("rm -f core/*.o")
         os.system("rm -f proto/*.o")
         os.system("rm -f lib/*.o")
         os.system("rm -f plugins/*/*.o")
         os.system("rm -f build/*.o")
         os.system("rm -f core/dot_h.c")
-    elif cmd == '--check':
+    elif options.check:
         os.system("cppcheck --max-configs=1000 --enable=all -q core/ plugins/ proto/ lib/ apache2/")
-
     else:
-        print("unknown uwsgiconfig command")
+        parser.print_help()
         sys.exit(1)

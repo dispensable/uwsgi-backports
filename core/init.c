@@ -51,6 +51,7 @@ struct http_status_codes hsc[] = {
         {"503", "Service Unavailable"},
         {"504", "Gateway Timeout"},
         {"505", "HTTP Version Not Supported"},
+        {"509", "Bandwidth Limit Exceeded"},
         {"", NULL},
 };
 
@@ -75,10 +76,12 @@ void uwsgi_init_default() {
 	uwsgi.original_log_fd = -1;
 
 	uwsgi.emperor_fd_config = -1;
+	uwsgi.emperor_fd_proxy = -1;
 	// default emperor scan frequency
 	uwsgi.emperor_freq = 3;
 	uwsgi.emperor_throttle = 1000;
 	uwsgi.emperor_heartbeat = 30;
+	uwsgi.emperor_curse_tolerance = 30;
 	// max 3 minutes throttling
 	uwsgi.emperor_max_throttle = 1000 * 180;
 	uwsgi.emperor_pid = -1;
@@ -343,7 +346,6 @@ void uwsgi_setup_workers() {
 		uwsgi.workers[i].signal_pipe[0] = -1;
 		uwsgi.workers[i].signal_pipe[1] = -1;
 		snprintf(uwsgi.workers[i].name, 0xff, "uWSGI worker %d", i);
-		snprintf(uwsgi.workers[i].snapshot_name, 0xff, "uWSGI snapshot %d", i);
 	}
 
 	uint64_t total_memory = (sizeof(struct uwsgi_app) * uwsgi.max_apps) + (sizeof(struct uwsgi_core) * uwsgi.cores) + (sizeof(void *) * uwsgi.max_apps * uwsgi.cores) + (uwsgi.buffer_size * uwsgi.cores) + (sizeof(struct iovec) * uwsgi.vec_size * uwsgi.cores);
@@ -445,11 +447,6 @@ void sanitize_args() {
 		}
         }
 
-        if (uwsgi.auto_snapshot > 0 && uwsgi.auto_snapshot > uwsgi.numproc) {
-                uwsgi_log("invalid auto-snapshot value: must be <= than processes\n");
-                exit(1);
-        }
-
 	if (uwsgi.shared->options[UWSGI_OPTION_MAX_WORKER_LIFETIME] > 0 && uwsgi.shared->options[UWSGI_OPTION_MIN_WORKER_LIFETIME] >= uwsgi.shared->options[UWSGI_OPTION_MAX_WORKER_LIFETIME]) {
 		uwsgi_log("invalid min-worker-lifetime value (%d), must be lower than max-worker-lifetime (%d)\n",
 			uwsgi.shared->options[UWSGI_OPTION_MIN_WORKER_LIFETIME], uwsgi.shared->options[UWSGI_OPTION_MAX_WORKER_LIFETIME]);
@@ -464,7 +461,7 @@ void sanitize_args() {
 		uwsgi_log("enabling cheaper-rss-limit-hard requires setting also cheaper-rss-limit-soft\n");
 		exit(1);
 	}
-	if ( uwsgi.cheaper_rss_limit_soft && uwsgi.cheaper_rss_limit_hard <= uwsgi.cheaper_rss_limit_soft) {
+	if ( uwsgi.cheaper_rss_limit_hard && uwsgi.cheaper_rss_limit_hard <= uwsgi.cheaper_rss_limit_soft) {
 		uwsgi_log("cheaper-rss-limit-hard value must be higher than cheaper-rss-limit-soft value\n");
 		exit(1);
 	}

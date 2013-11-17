@@ -118,6 +118,9 @@ void uwsgi_master_check_idle() {
 				if (errno != ECHILD)
 					uwsgi_error("uwsgi_master_check_idle()/waitpid()");
 			}
+			else {
+				uwsgi.workers[i].pid = 0;
+			}
 		}
 		uwsgi_add_sockets_to_queue(uwsgi.master_queue, -1);
 		uwsgi_log("cheap mode enabled: waiting for socket connection...\n");
@@ -322,3 +325,14 @@ void uwsgi_master_check_crons_deadline() {
 	}
 }
 
+void uwsgi_master_check_mountpoints() {
+	struct uwsgi_string_list *usl;
+	uwsgi_foreach(usl, uwsgi.mountpoints_check) {
+		if (uwsgi_check_mountpoint(usl->value)) {
+			uwsgi_log_verbose("mountpoint %s failed, triggering detonation...\n", usl->value);
+			uwsgi_nuclear_blast();
+			//never here
+			exit(1);
+		}
+	}
+}

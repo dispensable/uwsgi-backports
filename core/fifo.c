@@ -99,7 +99,7 @@ int uwsgi_master_fifo() {
 }
 
 int uwsgi_master_fifo_manage(int fd) {
-	char cmd;
+	unsigned char cmd;
 	ssize_t rlen = read(fd, &cmd, 1);
 	if (rlen < 0) {
 		if (uwsgi_is_again()) return 0;

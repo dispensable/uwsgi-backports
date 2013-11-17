@@ -582,6 +582,88 @@ static int uwsgi_router_break(struct uwsgi_route *ur, char *arg) {
 	return 0;
 }
 
+// simple math router
+static int uwsgi_router_simple_math_func(struct wsgi_request *wsgi_req, struct uwsgi_route *ur) {
+	char **subject = (char **) (((char *)(wsgi_req))+ur->subject);
+        uint16_t *subject_len = (uint16_t *)  (((char *)(wsgi_req))+ur->subject_len);
+
+	uint16_t var_vallen = 0;
+	char *var_value = uwsgi_get_var(wsgi_req, ur->data, ur->data_len, &var_vallen);
+	if (!var_value) return UWSGI_ROUTE_BREAK;
+
+	int64_t base_value = uwsgi_str_num(var_value, var_vallen);
+	int64_t value = 1;
+
+	if (ur->data2_len) {
+        	struct uwsgi_buffer *ub = uwsgi_routing_translate(wsgi_req, ur, *subject, *subject_len, ur->data2, ur->data2_len);
+        	if (!ub) return UWSGI_ROUTE_BREAK;
+		value = uwsgi_str_num(ub->buf, ub->pos);
+		uwsgi_buffer_destroy(ub);
+	}
+
+	char out[sizeof(UMAX64_STR)+1];
+	int64_t total = 0;
+
+	switch(ur->custom) {
+		// -
+		case 1:
+			total = base_value - value;
+			break;
+		// *
+		case 2:
+			total = base_value * value;
+			break;
+		// /
+		case 3:
+			if (value == 0) total = 0;
+			else {
+				total = base_value/value;
+			}
+			break;
+		default:
+			total = base_value + value;
+			break;
+	}
+
+	int ret = uwsgi_long2str2n(total, out, sizeof(UMAX64_STR)+1);
+	if (ret <= 0) return UWSGI_ROUTE_BREAK;
+
+        if (!uwsgi_req_append(wsgi_req, ur->data, ur->data_len, out, ret)) {
+                return UWSGI_ROUTE_BREAK;
+        }
+        return UWSGI_ROUTE_NEXT;
+}
+
+static int uwsgi_router_simple_math_plus(struct uwsgi_route *ur, char *arg) {
+        ur->func = uwsgi_router_simple_math_func;
+	char *comma = strchr(arg, ',');
+	if (comma) {
+		ur->data = arg;
+		ur->data_len = comma - arg;
+		ur->data2 = comma+1;
+		ur->data2_len = strlen(ur->data);
+	}
+	else {
+		ur->data = arg;
+		ur->data_len = strlen(arg);
+	}
+        return 0;
+}
+
+static int uwsgi_router_simple_math_minus(struct uwsgi_route *ur, char *arg) {
+	ur->custom = 1;
+	return uwsgi_router_simple_math_plus(ur, arg);
+}
+
+static int uwsgi_router_simple_math_multiply(struct uwsgi_route *ur, char *arg) {
+	ur->custom = 2;
+	return uwsgi_router_simple_math_plus(ur, arg);
+}
+
+static int uwsgi_router_simple_math_divide(struct uwsgi_route *ur, char *arg) {
+	ur->custom = 2;
+	return uwsgi_router_simple_math_plus(ur, arg);
+}
 
 // harakiri router
 static int uwsgi_router_harakiri_func(struct wsgi_request *wsgi_req, struct uwsgi_route *route) {
@@ -639,7 +721,6 @@ static int uwsgi_router_fixcl(struct uwsgi_route *ur, char *arg) {
         ur->func = uwsgi_router_fixcl_func;
         return 0;
 }
-
 
 // log route
 static int uwsgi_router_log_func(struct wsgi_request *wsgi_req, struct uwsgi_route *ur) {
@@ -1199,10 +1280,21 @@ static int uwsgi_router_alarm(struct uwsgi_route *ur, char *arg) {
 
 // send route
 static int uwsgi_router_send_func(struct wsgi_request *wsgi_req, struct uwsgi_route *route) {
-	uwsgi_response_write_body_do(wsgi_req, route->data, route->data_len);
+	char **subject = (char **) (((char *)(wsgi_req))+route->subject);
+        uint16_t *subject_len = (uint16_t *)  (((char *)(wsgi_req))+route->subject_len);
+
+	struct uwsgi_buffer *ub = uwsgi_routing_translate(wsgi_req, route, *subject, *subject_len, route->data, route->data_len);
+        if (!ub) {
+                return UWSGI_ROUTE_BREAK;
+        }
 	if (route->custom) {
-		uwsgi_response_write_body_do(wsgi_req, "\r\n", 2);
+		if (uwsgi_buffer_append(ub, "\r\n", 2)) {
+			uwsgi_buffer_destroy(ub);
+			return UWSGI_ROUTE_BREAK;
+		}
 	}
+	uwsgi_response_write_body_do(wsgi_req, ub->buf, ub->pos);
+	uwsgi_buffer_destroy(ub);
         return UWSGI_ROUTE_NEXT;
 }
 static int uwsgi_router_send(struct uwsgi_route *ur, char *arg) {
@@ -1629,48 +1721,6 @@ static char *uwsgi_route_var_hex(struct wsgi_request *wsgi_req, char *key, uint1
         return ret;
 }
 
-#ifdef UWSGI_MATHEVAL
-static char *uwsgi_route_var_math(struct wsgi_request *wsgi_req, char *key, uint16_t keylen, uint16_t *vallen) {
-	char *ret = NULL;
-	// avoid crash	
-	if (!wsgi_req->var_cnt) return NULL;
-	// we make a bit of fun here, we do a copy of the vars buffer (+1 byte for final zero) and zeor-pad all of the strings
-	char *vars_buf = uwsgi_malloc(wsgi_req->uh->pktsize + keylen + 1);
-	char **names = uwsgi_malloc(sizeof(char *) * (wsgi_req->var_cnt/2));
-	double *values = uwsgi_calloc(sizeof(double) * (wsgi_req->var_cnt/2));
-	int i,j = 0;
-	char *ptr = vars_buf;
-	for (i = wsgi_req->var_cnt-1; i > 0; i -= 2) {
-		memcpy(ptr, wsgi_req->hvec[i-1].iov_base, wsgi_req->hvec[i-1].iov_len);	
-		names[j] = ptr;
-		ptr += wsgi_req->hvec[i-1].iov_len;
-		*ptr++=0;
-		char *num = ptr;
-		memcpy(ptr, wsgi_req->hvec[i].iov_base, wsgi_req->hvec[i].iov_len);
-		ptr += wsgi_req->hvec[i].iov_len;
-                *ptr++=0;
-		values[j] = strtod(num, NULL);
-		j++;
-        }
-
-	char *expr = ptr;
-	memcpy(ptr, key, keylen); ptr += keylen;
-	*ptr++=0;
-
-	void *e = evaluator_create(expr);
-        if (!e) goto end;
-        double n = evaluator_evaluate(e, j, names, values);
-        evaluator_destroy(e);
-	ret = uwsgi_num2str((int)n);
-	*vallen = strlen(ret);
-end:
-	free(vars_buf);
-	free(names);
-	free(values);
-	return ret;
-}
-#endif
-
 // register embedded routers
 void uwsgi_register_embedded_routers() {
 	uwsgi_register_router("continue", uwsgi_router_continue);
@@ -1702,6 +1752,11 @@ void uwsgi_register_embedded_routers() {
         uwsgi_register_router("setscheme", uwsgi_router_setscheme);
         uwsgi_register_router("setprocname", uwsgi_router_setprocname);
         uwsgi_register_router("alarm", uwsgi_router_alarm);
+
+        uwsgi_register_router("+", uwsgi_router_simple_math_plus);
+        uwsgi_register_router("-", uwsgi_router_simple_math_minus);
+        uwsgi_register_router("*", uwsgi_router_simple_math_multiply);
+        uwsgi_register_router("/", uwsgi_router_simple_math_divide);
 
         uwsgi_register_router("flush", uwsgi_router_flush);
         uwsgi_register_router("fixcl", uwsgi_router_fixcl);
@@ -1746,10 +1801,6 @@ void uwsgi_register_embedded_routers() {
 	urv->need_free = 1;
         urv = uwsgi_register_route_var("httptime", uwsgi_route_var_httptime);
 	urv->need_free = 1;
-#ifdef UWSGI_MATHEVAL
-        urv = uwsgi_register_route_var("math", uwsgi_route_var_math);
-	urv->need_free = 1;
-#endif
         urv = uwsgi_register_route_var("base64", uwsgi_route_var_base64);
 	urv->need_free = 1;
 

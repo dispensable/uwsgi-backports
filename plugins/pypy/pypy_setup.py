@@ -172,6 +172,8 @@ const char *uwsgi_pypy_version;
 
 char *uwsgi_binary_path();
 
+void *uwsgi_malloc(size_t);
+
 int uwsgi_response_prepare_headers(struct wsgi_request *, char *, size_t);
 int uwsgi_response_add_header(struct wsgi_request *, char *, uint16_t, char *, uint16_t);
 int uwsgi_response_write_body_do(struct wsgi_request *, char *, size_t);
@@ -186,7 +188,7 @@ int uwsgi_is_again();
 int uwsgi_register_rpc(char *, struct uwsgi_plugin *, uint8_t, void *);
 int uwsgi_register_signal(uint8_t, char *, void *, uint8_t);
 
-char *uwsgi_do_rpc(char *, char *, uint8_t, char **, uint16_t *, uint16_t *);
+char *uwsgi_do_rpc(char *, char *, uint8_t, char **, uint16_t *, uint64_t *);
 
 void uwsgi_set_processname(char *);
 int uwsgi_signal_send(int, uint8_t);
@@ -234,6 +236,13 @@ void uwsgi_disconnect(struct wsgi_request *);
 int uwsgi_ready_fd(struct wsgi_request *);
 
 void set_user_harakiri(int);
+
+int uwsgi_metric_set(char *, char *, int64_t);
+int uwsgi_metric_inc(char *, char *, int64_t);
+int uwsgi_metric_dec(char *, char *, int64_t);
+int uwsgi_metric_mul(char *, char *, int64_t);
+int uwsgi_metric_div(char *, char *, int64_t);
+int64_t uwsgi_metric_get(char *, char *);
 
 %s
 
@@ -483,15 +492,16 @@ class uwsgi_pypy_RPC(object):
         for i in range(0, argc):
             pargs.append(ffi.string(argv[i], argvs[i]))
         response = self.func(*pargs)
-        if len(response) > 0 and len(response) <= 65535:
-            dst = ffi.buffer(buf, 65536)
+        if len(response) > 0:
+            buf[0] = lib.uwsgi_malloc(len(response))
+            dst = ffi.buffer(buf[0], len(response))
             dst[:len(response)] = response
         return len(response)
 
 
 def uwsgi_pypy_uwsgi_register_rpc(name, func, argc=0):
     rpc_func = uwsgi_pypy_RPC(func)
-    cb = ffi.callback("int(int, char*[], int[], char*)", rpc_func)
+    cb = ffi.callback("int(int, char*[], int[], char**)", rpc_func)
     uwsgi_gc.append(cb)
     if lib.uwsgi_register_rpc(ffi.new("char[]", name), ffi.addressof(lib.pypy_plugin), argc, cb) < 0:
         raise Exception("unable to register rpc func %s" % name)
@@ -501,7 +511,7 @@ def uwsgi_pypy_rpc(node, func, *args):
     argc = 0
     argv = ffi.new('char*[256]')
     argvs = ffi.new('uint16_t[256]')
-    rsize = ffi.new('uint16_t*')
+    rsize = ffi.new('uint64_t*')
 
     for arg in args:
         if argc >= 255:
@@ -534,6 +544,12 @@ uwsgi.call = uwsgi_pypy_call
     
 uwsgi.signal = lambda x: lib.uwsgi_signal_send(lib.uwsgi.signal_socket, x)
 
+uwsgi.metric_get = lambda x: lib.uwsgi_metric_get(x, ffi.NULL)
+uwsgi.metric_set = lambda x, y: lib.uwsgi_metric_set(x, ffi.NULL, y)
+uwsgi.metric_inc = lambda x, y=1: lib.uwsgi_metric_inc(x, ffi.NULL, y)
+uwsgi.metric_dec = lambda x, y=1: lib.uwsgi_metric_dec(x, ffi.NULL, y)
+uwsgi.metric_mul = lambda x, y=1: lib.uwsgi_metric_mul(x, ffi.NULL, y)
+uwsgi.metric_div = lambda x, y=1: lib.uwsgi_metric_div(x, ffi.NULL, y)
 
 def uwsgi_pypy_uwsgi_cache_get(key, cache=ffi.NULL):
     vallen = ffi.new('uint64_t*')

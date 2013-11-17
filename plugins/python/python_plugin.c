@@ -156,7 +156,13 @@ struct uwsgi_option uwsgi_python_options[] = {
 	{"wsgi-env-behavior", required_argument, 0, "set the strategy for allocating/deallocating the WSGI env", uwsgi_opt_set_str, &up.wsgi_env_behaviour, 0},
 	{"start_response-nodelay", no_argument, 0, "send WSGI http headers as soon as possible (PEP violation)", uwsgi_opt_true, &up.start_response_nodelay, 0},
 
+	{"wsgi-strict", no_argument, 0, "try to be fully PEP compliant disabling optimizations", uwsgi_opt_true, &up.wsgi_strict, 0},
+	{"wsgi-accept-buffer", no_argument, 0, "accept CPython buffer-compliant objects as WSGI response in addition to string/bytes", uwsgi_opt_true, &up.wsgi_accept_buffer, 0},
+	{"wsgi-accept-buffers", no_argument, 0, "accept CPython buffer-compliant objects as WSGI response in addition to string/bytes", uwsgi_opt_true, &up.wsgi_accept_buffer, 0},
+
 	{"python-version", no_argument, 0, "report python version", uwsgi_opt_pyver, NULL, UWSGI_OPT_IMMEDIATE},
+
+	{"python-raw", required_argument, 0, "load a python file for managing raw requests", uwsgi_opt_set_str, &up.raw, 0},
 
 	{0, 0, 0, 0, 0, 0, 0},
 };
@@ -307,6 +313,10 @@ realstuff:
 
 	// this time we use this higher level function
 	// as this code can be executed in a signal handler
+
+#ifdef __GNU_kFreeBSD__
+	return;
+#endif
 
 	if (!Py_IsInitialized()) {
 		return;
@@ -1068,7 +1078,6 @@ void uwsgi_python_init_apps() {
         up.loaders[LOADER_CALLABLE] = uwsgi_callable_loader;
         up.loaders[LOADER_STRING_CALLABLE] = uwsgi_string_callable_loader;
 
-
 	struct uwsgi_string_list *upli = up.import_list;
 	while(upli) {
 		if (strchr(upli->value, '/') || uwsgi_endswith(upli->value, ".py")) {
@@ -1119,6 +1128,12 @@ next:
 		uppa = uppa->next;
         }
 
+	if (up.raw) {
+		up.raw_callable = uwsgi_file_loader(up.raw);
+		if (up.raw_callable) {
+			Py_INCREF(up.raw_callable);
+		}
+	}
 
 	if (up.wsgi_config != NULL) {
 		init_uwsgi_app(LOADER_UWSGI, up.wsgi_config, uwsgi.wsgi_req, up.main_thread, PYTHON_APP_TYPE_WSGI);
@@ -1354,8 +1369,10 @@ void *uwsgi_python_autoreloader_thread(void *foobar) {
 		UWSGI_RELEASE_GIL;
 		sleep(up.auto_reload);
 		UWSGI_GET_GIL;
-		// do not start monitoring til the first app is loaded (required for lazy mode)
-		if (uwsgi_apps_cnt == 0) continue;
+		if (uwsgi.lazy || uwsgi.lazy_apps) {
+			// do not start monitoring til the first app is loaded (required for lazy mode)
+			if (uwsgi_apps_cnt == 0) continue;
+		}
 #ifdef UWSGI_PYTHON_OLD
                 int pos = 0;
 #else
@@ -1363,6 +1380,7 @@ void *uwsgi_python_autoreloader_thread(void *foobar) {
 #endif
 		PyObject *mod_name, *mod;
                 while (PyDict_Next(modules, &pos, &mod_name, &mod)) {
+			if (mod == NULL) continue;
 			int found = 0;
 			struct uwsgi_string_list *usl = up.auto_reload_ignore;
 			while(usl) {
@@ -1504,7 +1522,7 @@ clear:
 	return -1;
 }
 
-uint16_t uwsgi_python_rpc(void *func, uint8_t argc, char **argv, uint16_t argvs[], char *buffer) {
+uint64_t uwsgi_python_rpc(void *func, uint8_t argc, char **argv, uint16_t argvs[], char **buffer) {
 
 	UWSGI_GET_GIL;
 
@@ -1528,8 +1546,9 @@ uint16_t uwsgi_python_rpc(void *func, uint8_t argc, char **argv, uint16_t argvs[
 		if (PyString_Check(ret)) {
 			rv = PyString_AsString(ret);
 			rl = PyString_Size(ret);
-			if (rl <= 65536) {
-				memcpy(buffer, rv, rl);
+			if (rl > 0) {
+				*buffer = uwsgi_malloc(rl);
+				memcpy(*buffer, rv, rl);
 				Py_DECREF(ret);
 				UWSGI_RELEASE_GIL;
 				return rl;

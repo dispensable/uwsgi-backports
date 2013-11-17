@@ -1,6 +1,6 @@
 /* async http protocol parser */
 
-#include "../uwsgi.h"
+#include <uwsgi.h>
 
 extern struct uwsgi_server uwsgi;
 
@@ -76,6 +76,96 @@ static uint16_t http_add_uwsgi_header(struct wsgi_request *wsgi_req, char *hh, i
 	return 2 + keylen + 2 + vallen;
 }
 
+static char *proxy1_parse(char *ptr, char *watermark, char **src, uint16_t *src_len, char **dst, uint16_t *dst_len,  char **src_port, uint16_t *src_port_len, char **dst_port, uint16_t *dst_port_len) {
+	// check for PROXY header
+	if (watermark - ptr > 6) {
+		if (memcmp(ptr, "PROXY ", 6)) return ptr;
+	}
+	else {
+		return ptr;
+	}
+
+	ptr+= 6;
+	char *base = ptr;
+	while (ptr < watermark) {
+		if (*ptr == ' ') {
+                        ptr++;
+                        break;
+                }
+		else if (*ptr == '\n') {
+			return ptr+1;
+		}
+                ptr++;
+	}
+
+	// SRC address
+	base = ptr;
+	while (ptr < watermark) {
+		if (*ptr == ' ') {
+			*src = base;
+			*src_len = ptr - base;
+                        ptr++;
+                        break;
+                }
+                else if (*ptr == '\n') {
+                        return ptr+1;
+                }
+                ptr++;
+	}
+
+	// DST address
+        base = ptr;
+        while (ptr < watermark) {
+                if (*ptr == ' ') {
+                        *dst = base;
+                        *dst_len = ptr - base;
+                        ptr++;
+                        break;
+                }
+                else if (*ptr == '\n') {
+                        return ptr+1;
+                }
+                ptr++;
+        }
+
+	// SRC port
+        base = ptr;
+        while (ptr < watermark) {
+                if (*ptr == ' ') {
+                        *src_port = base;
+                        *src_port_len = ptr - base;
+                        ptr++;
+                        break;
+                }
+                else if (*ptr == '\n') {
+                        return ptr+1;
+                }
+                ptr++;
+        }
+
+        // DST port
+        base = ptr;
+        while (ptr < watermark) {
+                if (*ptr == '\r') {
+                        *dst_port = base;
+                        *dst_port_len = ptr - base;
+                        ptr++;
+                        break;
+                }
+                else if (*ptr == '\n') {
+                        return ptr+1;
+                }
+                ptr++;
+        }
+
+	// check for \n
+	while (ptr < watermark) {
+		if (*ptr == '\n') return ptr+1;
+		ptr++;
+	}
+
+	return ptr;
+}
 
 static int http_parse(struct wsgi_request *wsgi_req, char *watermark) {
 
@@ -84,6 +174,19 @@ static int http_parse(struct wsgi_request *wsgi_req, char *watermark) {
 	char *query_string = NULL;
 	char ip[INET_ADDRSTRLEN+1];
 	struct sockaddr_in *http_sin = (struct sockaddr_in *) &wsgi_req->c_addr;
+	char *proxy_src = NULL;
+	char *proxy_dst = NULL;
+	char *proxy_src_port = NULL;
+	char *proxy_dst_port = NULL;
+	uint16_t proxy_src_len = 0;
+	uint16_t proxy_dst_len = 0;
+	uint16_t proxy_src_port_len = 0;
+	uint16_t proxy_dst_port_len = 0;
+
+	if (uwsgi.enable_proxy_protocol) {
+		ptr = proxy1_parse(ptr, watermark, &proxy_src, &proxy_src_len, &proxy_dst, &proxy_dst_len, &proxy_src_port, &proxy_src_port_len, &proxy_dst_port, &proxy_dst_port_len);
+		base = ptr;
+	}
 
 	// REQUEST_METHOD 
 	while (ptr < watermark) {
@@ -162,24 +265,40 @@ static int http_parse(struct wsgi_request *wsgi_req, char *watermark) {
 	// SERVER_NAME
 	wsgi_req->uh->pktsize += proto_base_add_uwsgi_var(wsgi_req, "SERVER_NAME", 11, uwsgi.hostname, uwsgi.hostname_len);
 
-	// SERVER_PORT
-	char *server_port = strchr(wsgi_req->socket->name, ':');
-	if (server_port) {
-		wsgi_req->uh->pktsize += proto_base_add_uwsgi_var(wsgi_req, "SERVER_PORT", 11, server_port+1, strlen(server_port+1));
+	// SERVER_PORT / SERVER_ADDR
+	if (proxy_dst) {
+		wsgi_req->uh->pktsize += proto_base_add_uwsgi_var(wsgi_req, "SERVER_ADDR", 11, proxy_dst, proxy_dst_len);
+                if (proxy_dst_port) {
+                        wsgi_req->uh->pktsize += proto_base_add_uwsgi_var(wsgi_req, "SERVER_PORT", 11, proxy_dst_port, proxy_dst_port_len);
+                }
 	}
 	else {
-		wsgi_req->uh->pktsize += proto_base_add_uwsgi_var(wsgi_req, "SERVER_PORT", 11, "80", 2);
+		char *server_port = strchr(wsgi_req->socket->name, ':');
+		if (server_port) {
+			wsgi_req->uh->pktsize += proto_base_add_uwsgi_var(wsgi_req, "SERVER_PORT", 11, server_port+1, strlen(server_port+1));
+		}
+		else {
+			wsgi_req->uh->pktsize += proto_base_add_uwsgi_var(wsgi_req, "SERVER_PORT", 11, "80", 2);
+		}
 	}
 
-	// TODO add ipv6 support
 	// REMOTE_ADDR
-	memset(ip, 0, INET_ADDRSTRLEN+1);
-	if (inet_ntop(AF_INET, (void *) &http_sin->sin_addr.s_addr, ip, INET_ADDRSTRLEN)) {
-		wsgi_req->uh->pktsize += proto_base_add_uwsgi_var(wsgi_req, "REMOTE_ADDR", 11, ip, strlen(ip));
+	if (proxy_src) {
+		wsgi_req->uh->pktsize += proto_base_add_uwsgi_var(wsgi_req, "REMOTE_ADDR", 11, proxy_src, proxy_src_len);
+		if (proxy_src_port) {
+			wsgi_req->uh->pktsize += proto_base_add_uwsgi_var(wsgi_req, "REMOTE_PORT", 11, proxy_src_port, proxy_src_port_len);
+		}
 	}
 	else {
-		uwsgi_error("inet_ntop()");
-		return -1;
+		// TODO add ipv6 support
+		memset(ip, 0, INET_ADDRSTRLEN+1);
+		if (inet_ntop(AF_INET, (void *) &http_sin->sin_addr.s_addr, ip, INET_ADDRSTRLEN)) {
+			wsgi_req->uh->pktsize += proto_base_add_uwsgi_var(wsgi_req, "REMOTE_ADDR", 11, ip, strlen(ip));
+		}
+		else {
+			uwsgi_error("inet_ntop()");
+			return -1;
+		}
 	}
 
 	//HEADERS
@@ -211,7 +330,7 @@ static int http_parse(struct wsgi_request *wsgi_req, char *watermark) {
 
 
 
-int uwsgi_proto_http_parser(struct wsgi_request *wsgi_req) {
+static int uwsgi_proto_http_parser(struct wsgi_request *wsgi_req) {
 
 	ssize_t j;
 	char *ptr;
@@ -239,7 +358,7 @@ int uwsgi_proto_http_parser(struct wsgi_request *wsgi_req) {
 	}
 	// mute on 0 len...
 	if (wsgi_req->proto_parser_pos > 0) {
-		uwsgi_error("uwsgi_proto_http_parser()");
+		uwsgi_log("uwsgi_proto_http_parser() -> client closed connection");
 	}
 	return -1;
 
@@ -437,3 +556,117 @@ int uwsgi_is_full_http(struct uwsgi_buffer *ub) {
 
 	return 0;
 }
+
+void uwsgi_proto_http_setup(struct uwsgi_socket *uwsgi_sock) {
+	uwsgi_sock->proto = uwsgi_proto_http_parser;
+                        uwsgi_sock->proto_accept = uwsgi_proto_base_accept;
+                        uwsgi_sock->proto_prepare_headers = uwsgi_proto_base_prepare_headers;
+                        uwsgi_sock->proto_add_header = uwsgi_proto_base_add_header;
+                        uwsgi_sock->proto_fix_headers = uwsgi_proto_base_fix_headers;
+                        uwsgi_sock->proto_read_body = uwsgi_proto_base_read_body;
+                        uwsgi_sock->proto_write = uwsgi_proto_base_write;
+                        uwsgi_sock->proto_write_headers = uwsgi_proto_base_write;
+                        uwsgi_sock->proto_sendfile = uwsgi_proto_base_sendfile;
+                        uwsgi_sock->proto_close = uwsgi_proto_base_close;
+                        if (uwsgi.offload_threads > 0)
+                                uwsgi_sock->can_offload = 1;
+
+}
+
+#ifdef UWSGI_SSL
+static int uwsgi_proto_https_parser(struct wsgi_request *wsgi_req) {
+
+        ssize_t j;
+        char *ptr;
+	int len = -1;
+
+        // first round ? (wsgi_req->proto_parser_buf is freed at the end of the request)
+        if (!wsgi_req->proto_parser_buf) {
+                wsgi_req->proto_parser_buf = uwsgi_malloc(uwsgi.buffer_size);
+        }
+
+        if (uwsgi.buffer_size - wsgi_req->proto_parser_pos == 0) {
+                uwsgi_log("invalid HTTPS request size (max %u)...skip\n", uwsgi.buffer_size);
+                return -1;
+        }
+
+retry:
+        len = SSL_read(wsgi_req->ssl, wsgi_req->proto_parser_buf + wsgi_req->proto_parser_pos, uwsgi.buffer_size - wsgi_req->proto_parser_pos);
+        if (len > 0) {
+                goto parse;
+        }
+	if (len == 0) goto empty;
+
+        int err = SSL_get_error(wsgi_req->ssl, len);
+
+        if (err == SSL_ERROR_WANT_READ) {
+                return UWSGI_AGAIN;
+        }
+
+        else if (err == SSL_ERROR_WANT_WRITE) {
+                int ret = uwsgi_wait_write_req(wsgi_req);
+                if (ret <= 0) return -1;
+                goto retry;
+        }
+
+        else if (err == SSL_ERROR_SYSCALL) {
+                uwsgi_error("uwsgi_proto_https_parser()/SSL_read()");
+        }
+	return -1;
+empty:
+        // mute on 0 len...
+        if (wsgi_req->proto_parser_pos > 0) {
+                uwsgi_log("uwsgi_proto_https_parser() -> client closed connection");
+        }
+        return -1;
+
+parse:
+        ptr = wsgi_req->proto_parser_buf + wsgi_req->proto_parser_pos;
+        wsgi_req->proto_parser_pos += len;
+
+        for (j = 0; j < len; j++) {
+                if (*ptr == '\r' && (wsgi_req->proto_parser_status == 0 || wsgi_req->proto_parser_status == 2)) {
+                        wsgi_req->proto_parser_status++;
+                }
+                else if (*ptr == '\r') {
+                        wsgi_req->proto_parser_status = 1;
+                }
+                else if (*ptr == '\n' && wsgi_req->proto_parser_status == 1) {
+                        wsgi_req->proto_parser_status = 2;
+                }
+                else if (*ptr == '\n' && wsgi_req->proto_parser_status == 3) {
+                        ptr++;
+                        wsgi_req->proto_parser_remains = len - (j + 1);
+                        if (wsgi_req->proto_parser_remains > 0) {
+                                wsgi_req->proto_parser_remains_buf = (wsgi_req->proto_parser_buf + wsgi_req->proto_parser_pos) - wsgi_req->proto_parser_remains;
+                        }
+			wsgi_req->https = "on";
+			wsgi_req->https_len = 2;
+                        if (http_parse(wsgi_req, ptr)) return -1;
+                        wsgi_req->uh->modifier1 = uwsgi.https_modifier1;
+                        wsgi_req->uh->modifier2 = uwsgi.https_modifier2;
+                        return UWSGI_OK;
+                }
+                else {
+                        wsgi_req->proto_parser_status = 0;
+                }
+                ptr++;
+        }
+
+        return UWSGI_AGAIN;
+}
+
+void uwsgi_proto_https_setup(struct uwsgi_socket *uwsgi_sock) {
+        uwsgi_sock->proto = uwsgi_proto_https_parser;
+                        uwsgi_sock->proto_accept = uwsgi_proto_ssl_accept;
+                        uwsgi_sock->proto_prepare_headers = uwsgi_proto_base_prepare_headers;
+                        uwsgi_sock->proto_add_header = uwsgi_proto_base_add_header;
+                        uwsgi_sock->proto_fix_headers = uwsgi_proto_base_fix_headers;
+                        uwsgi_sock->proto_read_body = uwsgi_proto_ssl_read_body;
+                        uwsgi_sock->proto_write = uwsgi_proto_ssl_write;
+                        uwsgi_sock->proto_write_headers = uwsgi_proto_ssl_write;
+                        uwsgi_sock->proto_sendfile = uwsgi_proto_ssl_sendfile;
+                        uwsgi_sock->proto_close = uwsgi_proto_ssl_close;
+
+}
+#endif

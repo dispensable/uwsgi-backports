@@ -40,6 +40,11 @@ int uwsgi_master_manage_events(int interesting_fd) {
 
 	// emperor event ?
 	if (uwsgi.has_emperor) {
+		if (uwsgi.emperor_fd_proxy > -1 && interesting_fd == uwsgi.emperor_fd_proxy) {
+			uwsgi_master_manage_emperor_proxy();	
+			return 0;
+		}
+
 		if (interesting_fd == uwsgi.emperor_fd) {
 			uwsgi_master_manage_emperor();
 			return 0;
@@ -113,6 +118,7 @@ int uwsgi_master_manage_events(int interesting_fd) {
                                 	reap_them_all(0);
                                 	uwsgi_unblock_signal(SIGTERM);
 				}
+                                if (usl->custom2 > 8) free(tmp);
                                 return 0;
                         }
                         usl = usl->next;

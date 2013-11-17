@@ -2,14 +2,29 @@
 
 extern struct uwsgi_server uwsgi;
 
-void uwsgi_restore_auto_snapshot(int signum) {
+void uwsgi_update_load_counters() {
 
-	if (uwsgi.workers[1].snapshot > 0) {
-		uwsgi.restore_snapshot = 1;
+	int i;
+	uint64_t busy_workers = 0;
+	uint64_t idle_workers = 0;
+
+        for (i = 1; i <= uwsgi.numproc; i++) {
+                if (uwsgi.workers[i].cheaped == 0 && uwsgi.workers[i].pid > 0) {
+                        if (uwsgi_worker_is_busy(i) == 0) {
+				idle_workers++;
+			}
+			else {
+				busy_workers++;
+			}
+                }
+        }
+
+	if (busy_workers >= (uint64_t) uwsgi.numproc) {
+		ushared->overloaded++;
 	}
-	else {
-		uwsgi_log("[WARNING] no snapshot available\n");
-	}
+
+	ushared->busy_workers = busy_workers;
+	ushared->idle_workers = idle_workers;
 
 }
 
@@ -32,24 +47,25 @@ void uwsgi_unblock_signal(int signum) {
 }
 
 void uwsgi_master_manage_udp(int udp_fd) {
+	char buf[4096];
 	struct sockaddr_in udp_client;
 	char udp_client_addr[16];
 	int i;
 
 	socklen_t udp_len = sizeof(udp_client);
-	ssize_t rlen = recvfrom(udp_fd, uwsgi.wsgi_req->buffer, uwsgi.buffer_size, 0, (struct sockaddr *) &udp_client, &udp_len);
+	ssize_t rlen = recvfrom(udp_fd, buf, 4096, 0, (struct sockaddr *) &udp_client, &udp_len);
 
 	if (rlen < 0) {
-		uwsgi_error("recvfrom()");
+		uwsgi_error("uwsgi_master_manage_udp()/recvfrom()");
 	}
 	else if (rlen > 0) {
 
 		memset(udp_client_addr, 0, 16);
 		if (inet_ntop(AF_INET, &udp_client.sin_addr.s_addr, udp_client_addr, 16)) {
-			if (uwsgi.wsgi_req->buffer[0] == UWSGI_MODIFIER_MULTICAST_ANNOUNCE) {
+			if (buf[0] == UWSGI_MODIFIER_MULTICAST_ANNOUNCE) {
 			}
-			else if (uwsgi.wsgi_req->buffer[0] == 0x30 && uwsgi.snmp) {
-				manage_snmp(udp_fd, (uint8_t *) uwsgi.wsgi_req->buffer, rlen, &udp_client);
+			else if (buf[0] == 0x30 && uwsgi.snmp) {
+				manage_snmp(udp_fd, (uint8_t *) buf, rlen, &udp_client);
 			}
 			else {
 
@@ -57,7 +73,7 @@ void uwsgi_master_manage_udp(int udp_fd) {
 				int udp_managed = 0;
 				for (i = 0; i < 256; i++) {
 					if (uwsgi.p[i]->manage_udp) {
-						if (uwsgi.p[i]->manage_udp(udp_client_addr, udp_client.sin_port, uwsgi.wsgi_req->buffer, rlen)) {
+						if (uwsgi.p[i]->manage_udp(udp_client_addr, udp_client.sin_port, buf, rlen)) {
 							udp_managed = 1;
 							break;
 						}
@@ -66,72 +82,15 @@ void uwsgi_master_manage_udp(int udp_fd) {
 
 				// else a simple udp logger
 				if (!udp_managed) {
-					uwsgi_log("[udp:%s:%d] %.*s", udp_client_addr, ntohs(udp_client.sin_port), (int) rlen, uwsgi.wsgi_req->buffer);
+					uwsgi_log("[udp:%s:%d] %.*s", udp_client_addr, ntohs(udp_client.sin_port), (int) rlen, buf);
 				}
 			}
 		}
 		else {
-			uwsgi_error("inet_ntop()");
+			uwsgi_error("uwsgi_master_manage_udp()/inet_ntop()");
 		}
 
 	}
-}
-
-void uwsgi_master_manage_emperor() {
-	char byte;
-	ssize_t rlen = read(uwsgi.emperor_fd, &byte, 1);
-	if (rlen > 0) {
-		uwsgi_log_verbose("received message %d from emperor\n", byte);
-		// remove me
-		if (byte == 0) {
-			close(uwsgi.emperor_fd);
-			if (!uwsgi.status.brutally_reloading)
-				kill_them_all(0);
-		}
-		// reload me
-		else if (byte == 1) {
-			// un-lazy the stack to trigger a real reload
-			uwsgi.lazy = 0;
-			uwsgi_block_signal(SIGHUP);
-			grace_them_all(0);
-			uwsgi_unblock_signal(SIGHUP);
-		}
-	}
-	else {
-		uwsgi_log("lost connection with my emperor !!!\n");
-		close(uwsgi.emperor_fd);
-		if (!uwsgi.status.brutally_reloading)
-			kill_them_all(0);
-		sleep(2);
-		exit(1);
-	}
-
-}
-
-
-void uwsgi_master_restore_snapshot() {
-	int i, waitpid_status;
-	uwsgi_log("[snapshot] restoring workers...\n");
-	for (i = 1; i <= uwsgi.numproc; i++) {
-		if (uwsgi.workers[i].pid == 0)
-			continue;
-		kill(uwsgi.workers[i].pid, SIGKILL);
-		if (waitpid(uwsgi.workers[i].pid, &waitpid_status, 0) < 0) {
-			uwsgi_error("waitpid()");
-		}
-		if (uwsgi.auto_snapshot > 0 && i > uwsgi.auto_snapshot) {
-			uwsgi.workers[i].pid = 0;
-			uwsgi.workers[i].snapshot = 0;
-		}
-		else {
-			uwsgi.workers[i].pid = uwsgi.workers[i].snapshot;
-			uwsgi.workers[i].snapshot = 0;
-			kill(uwsgi.workers[i].pid, SIGURG);
-			uwsgi_log("Restored uWSGI worker %d (pid: %d)\n", i, (int) uwsgi.workers[i].pid);
-		}
-	}
-
-	uwsgi.restore_snapshot = 0;
 }
 
 void suspend_resume_them_all(int signum) {
@@ -331,9 +290,6 @@ int master_loop(char **argv, char **environ) {
 	}
 	uwsgi_unix_signal(SIGINT, kill_them_all);
 	uwsgi_unix_signal(SIGUSR1, stats);
-	if (uwsgi.auto_snapshot) {
-		uwsgi_unix_signal(SIGURG, uwsgi_restore_auto_snapshot);
-	}
 
 	atexit(uwsgi_master_cleanup_hooks);
 
@@ -378,6 +334,7 @@ int master_loop(char **argv, char **environ) {
 #ifdef UWSGI_SSL
 	uwsgi_start_legions();
 #endif
+	uwsgi_metrics_start_collector();
 
 	uwsgi_add_reload_fds();
 
@@ -387,7 +344,18 @@ int master_loop(char **argv, char **environ) {
 	uwsgi.wsgi_req->buffer = uwsgi.workers[0].cores[0].buffer;
 
 	if (uwsgi.has_emperor) {
-		event_queue_add_fd_read(uwsgi.master_queue, uwsgi.emperor_fd);
+		if (uwsgi.emperor_proxy) {
+			uwsgi.emperor_fd_proxy = bind_to_unix(uwsgi.emperor_proxy, uwsgi.listen_queue, 0, 0);
+			if (uwsgi.emperor_fd_proxy < 0) exit(1);
+			if (chmod(uwsgi.emperor_proxy, S_IRUSR|S_IWUSR)) {
+				uwsgi_error("[emperor-proxy] chmod()");
+				exit(1);
+			}
+			event_queue_add_fd_read(uwsgi.master_queue, uwsgi.emperor_fd_proxy);
+		}
+		else {
+			event_queue_add_fd_read(uwsgi.master_queue, uwsgi.emperor_fd);
+		}
 	}
 
 	if (uwsgi.zerg_server) {
@@ -507,6 +475,28 @@ int master_loop(char **argv, char **environ) {
 	// fsmon
 	uwsgi_fsmon_setup();
 
+	uwsgi_foreach(usl, uwsgi.signal_timers) {
+		char *space = strchr(usl->value, ' ');
+		if (!space) {
+			uwsgi_log("invalid signal timer syntax, must be: <signal> <seconds>\n");
+			exit(1);
+		}
+		*space = 0;
+		uwsgi_add_timer(atoi(usl->value), atoi(space+1));
+		*space = ' ';
+	}
+
+	uwsgi_foreach(usl, uwsgi.rb_signal_timers) {
+                char *space = strchr(usl->value, ' ');
+                if (!space) {
+                        uwsgi_log("invalid redblack signal timer syntax, must be: <signal> <seconds>\n");
+                        exit(1);
+                }
+                *space = 0;
+                uwsgi_signal_add_rb_timer(atoi(usl->value), atoi(space+1), 0);
+                *space = ' ';
+        }
+
 	// setup cheaper algos (can be stacked)
 	uwsgi.cheaper_algo = uwsgi_cheaper_algo_spare;
 	if (uwsgi.requested_cheaper_algo) {
@@ -560,21 +550,6 @@ int master_loop(char **argv, char **environ) {
 		// check for daemons (smart and dumb)
 		uwsgi_daemons_smart_check();
 
-
-		if (uwsgi.respawn_snapshots) {
-			for (i = 1; i <= uwsgi.respawn_snapshots; i++) {
-				if (uwsgi_respawn_worker(i))
-					return 0;
-			}
-
-			uwsgi.respawn_snapshots = 0;
-		}
-
-		if (uwsgi.restore_snapshot) {
-			uwsgi_master_restore_snapshot();
-			continue;
-		}
-
 		// cheaper management
 		if (uwsgi.cheaper && !uwsgi.status.is_cheap && !uwsgi_instance_is_reloading && !uwsgi_instance_is_dying && !uwsgi.workers[0].suspended) {
 			if (!uwsgi_calc_cheaper())
@@ -604,8 +579,10 @@ int master_loop(char **argv, char **environ) {
 
 			/* all processes ok, doing status scan after N seconds */
 			check_interval = uwsgi.shared->options[UWSGI_OPTION_MASTER_INTERVAL];
-			if (!check_interval)
+			if (!check_interval) {
 				check_interval = 1;
+				uwsgi.shared->options[UWSGI_OPTION_MASTER_INTERVAL] = 1;
+			}
 
 
 			// add unregistered file monitors
@@ -640,14 +617,14 @@ int master_loop(char **argv, char **environ) {
 
 			if (ushared->rb_timers_cnt > 0) {
 				min_timeout = uwsgi_min_rb_timer(rb_timers, NULL);
-				if (min_timeout == NULL) {
-					check_interval = uwsgi.shared->options[UWSGI_OPTION_MASTER_INTERVAL];
-				}
-				else {
-					check_interval = min_timeout->value - uwsgi_now();
-					if (check_interval <= 0) {
+				if (min_timeout) {
+					int delta = min_timeout->value - uwsgi_now();
+					if (delta <= 0) {
 						expire_rb_timeouts(rb_timers);
-						check_interval = 0;
+					}
+					// if the timer expires before the check_interval, override it
+					else if (delta < check_interval) {
+						check_interval = delta;
 					}
 				}
 			}
@@ -660,6 +637,9 @@ int master_loop(char **argv, char **environ) {
 					expire_rb_timeouts(rb_timers);
 				}
 			}
+
+			// update load counter
+			uwsgi_update_load_counters();
 
 
 			// check uwsgi-cron table
@@ -701,8 +681,10 @@ int master_loop(char **argv, char **environ) {
 			uwsgi_master_check_idle();
 
 			check_interval = uwsgi.shared->options[UWSGI_OPTION_MASTER_INTERVAL];
-			if (!check_interval)
+			if (!check_interval) {
 				check_interval = 1;
+				uwsgi.shared->options[UWSGI_OPTION_MASTER_INTERVAL] = 1;
+			}
 
 
 			// get listen_queue status
@@ -735,6 +717,7 @@ int master_loop(char **argv, char **environ) {
 			uwsgi_master_check_mules_deadline();
 			uwsgi_master_check_spoolers_deadline();
 			uwsgi_master_check_crons_deadline();
+			uwsgi_master_check_mountpoints();
 
 #ifdef __linux__
 #ifdef MADV_MERGEABLE

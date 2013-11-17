@@ -440,6 +440,11 @@ void uwsgi_stats_pusher_loop(struct uwsgi_thread *ut) {
 	void *events = event_queue_alloc(1);
 	for (;;) {
 		int nevents = event_queue_wait_multi(ut->queue, 1, events, 1);
+		if (nevents < 0) {
+			if (errno == EINTR) continue;
+			uwsgi_log_verbose("ending the stats pusher thread...\n");
+			return;
+		}
 		if (nevents > 0) {
 			int interesting_fd = event_queue_interesting_fd(events, 0);
 			char buf[4096];
@@ -457,7 +462,8 @@ void uwsgi_stats_pusher_loop(struct uwsgi_thread *ut) {
 		struct uwsgi_stats *us = NULL;
 		while (uspi) {
 			int delta = uspi->freq ? uspi->freq : uwsgi.stats_pusher_default_freq;
-			if ((uspi->last_run + delta) <= now) {
+			if (((uspi->last_run + delta) <= now) || (uspi->needs_retry && (uspi->next_retry <= now))) {
+				if (uspi->needs_retry) uspi->retries++;
 				if (uspi->raw) {
 					uspi->pusher->func(uspi, now, NULL, 0);
 				}
@@ -470,6 +476,17 @@ void uwsgi_stats_pusher_loop(struct uwsgi_thread *ut) {
 					uspi->pusher->func(uspi, now, us->base, us->pos);
 				}
 				uspi->last_run = now;
+				if (uspi->needs_retry && uspi->max_retries > 0 && uspi->retries < uspi->max_retries) {
+					uwsgi_log("[uwsgi-stats-pusher] %s failed (%d), retry in %ds\n", uspi->pusher->name, uspi->retries, uspi->retry_delay);
+					uspi->next_retry = now + uspi->retry_delay;
+				} else if (uspi->needs_retry && uspi->retries >= uspi->max_retries) {
+					uwsgi_log("[uwsgi-stats-pusher] %s failed and maximum number of retries was reached (%d)\n", uspi->pusher->name, uspi->retries);
+					uspi->needs_retry = 0;
+					uspi->retries = 0;
+				} else if (uspi->retries) {
+					uwsgi_log("[uwsgi-stats-pusher] retry succeeded for %s\n", uspi->pusher->name);
+					uspi->retries = 0;
+				}
 			}
 next:
 			uspi = uspi->next;
@@ -529,50 +546,6 @@ struct uwsgi_stats_pusher *uwsgi_register_stats_pusher(char *name, void (*func) 
 	}
 
 	return pusher;
-}
-
-struct uwsgi_stats_pusher_file_conf {
-	char *path;
-	char *freq;
-	char *separator;
-};
-
-void uwsgi_stats_pusher_file(struct uwsgi_stats_pusher_instance *uspi, time_t now, char *json, size_t json_len) {
-	struct uwsgi_stats_pusher_file_conf *uspic = (struct uwsgi_stats_pusher_file_conf *) uspi->data;
-	if (!uspi->configured) {
-		uspic = uwsgi_calloc(sizeof(struct uwsgi_stats_pusher_file_conf));
-		if (uspi->arg) {
-			if (uwsgi_kvlist_parse(uspi->arg, strlen(uspi->arg), ',', '=', "path", &uspic->path, "separator", &uspic->separator, "freq", &uspic->freq, NULL)) {
-				free(uspi);
-				return;
-			}
-		}
-		if (!uspic->path)
-			uspic->path = "uwsgi.stats";
-		if (!uspic->separator)
-			uspic->separator = "\n\n";
-		if (uspic->freq)
-			uspi->freq = atoi(uspic->freq);
-		uspi->configured = 1;
-		uspi->data = uspic;
-	}
-
-	int fd = open(uspic->path, O_RDWR | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP);
-	if (fd < 0) {
-		uwsgi_error_open(uspic->path);
-		return;
-	}
-	ssize_t rlen = write(fd, json, json_len);
-	if (rlen != (ssize_t) json_len) {
-		uwsgi_error("uwsgi_stats_pusher_file() -> write()\n");
-	}
-
-	rlen = write(fd, uspic->separator, strlen(uspic->separator));
-	if (rlen != (ssize_t) strlen(uspic->separator)) {
-		uwsgi_error("uwsgi_stats_pusher_file() -> write()\n");
-	}
-
-	close(fd);
 }
 
 static void stats_dump_var(char *k, uint16_t kl, char *v, uint16_t vl, void *data) {

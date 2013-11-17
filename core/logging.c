@@ -498,7 +498,7 @@ void uwsgi_check_logrotate(void) {
 		uwsgi.shared->logsize = lseek(2, 0, SEEK_CUR);
 	}
 
-	if (uwsgi.log_maxsize > 0 && uwsgi.shared->logsize > uwsgi.log_maxsize) {
+	if (uwsgi.log_maxsize > 0 && (uint64_t) uwsgi.shared->logsize > uwsgi.log_maxsize) {
 		need_rotation = 1;
 	}
 
@@ -575,6 +575,7 @@ void uwsgi_log_reopen() {
                 if (uwsgi.original_log_fd < 0) {
                         uwsgi_error_open(uwsgi.logfile);
                         grace_them_all(0);
+			return;
                 }
                 ret = snprintf(message, 1024, "[%d] %s reopened.\n", (int) uwsgi_now(), uwsgi.logfile);
                 if (ret > 0) {
@@ -980,6 +981,12 @@ void uwsgi_logit_lf(struct wsgi_request *wsgi_req) {
 				uwsgi.logvectors[wsgi_req->async_id][pos].iov_len = 0;
 			}
 		}
+		// metric
+		else if (logchunk->type == 4) {
+			int64_t metric = uwsgi_metric_get(logchunk->ptr, NULL);
+			uwsgi.logvectors[wsgi_req->async_id][pos].iov_base = uwsgi_64bit2str(metric);
+			uwsgi.logvectors[wsgi_req->async_id][pos].iov_len = strlen(uwsgi.logvectors[wsgi_req->async_id][pos].iov_base);
+		}
 
 		if (uwsgi.logvectors[wsgi_req->async_id][pos].iov_len == 0 && logchunk->type != 0) {
 			uwsgi.logvectors[wsgi_req->async_id][pos].iov_base = (char *) empty_var;
@@ -1231,6 +1238,7 @@ void uwsgi_add_logchunk(int variable, int pos, char *ptr, size_t len) {
 	   1 -> offsetof variable
 	   2 -> logvar
 	   3 -> func
+	   4 -> metric
 	 */
 
 	logchunk->type = variable;
@@ -1395,6 +1403,11 @@ void uwsgi_add_logchunk(int variable, int pos, char *ptr, size_t len) {
 		else if (!uwsgi_strncmp(ptr, len, "headers", 7)) {
 			logchunk->type = 3;
 			logchunk->func = uwsgi_lf_headers;
+			logchunk->free = 1;
+		}
+		else if (!uwsgi_starts_with(ptr, len, "metric.", 7)) {
+			logchunk->type = 4;
+			logchunk->ptr = uwsgi_concat2n(ptr+7, len - 7, "", 0);
 			logchunk->free = 1;
 		}
 		// logvar
@@ -1841,7 +1854,7 @@ void uwsgi_log_encoder_parse_vars(struct uwsgi_log_encoder *ule) {
 /*
         // format: foo ${var} bar
         msg (the logline)
-        msgnl (the logine with newline)
+        msgnl (the logline with newline)
         unix (the time_t value)
         micros (current microseconds)
         strftime (strftime)
